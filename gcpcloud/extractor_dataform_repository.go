@@ -1,0 +1,154 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025-2026 eshu-hq
+
+package gcpcloud //nolint:dirgate // #6696 wave-1: flat extractor moves to extractor/<group> in a later slice
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/eshu-hq/eshu-collector-gcp-cloud/gcpcloud/catalog"
+)
+
+func init() {
+	RegisterAssetExtractor(catalog.AssetTypeDataformRepository, extractDataformRepository)
+}
+
+// dataformRepositoryData is the bounded view of a CAI
+// dataform.googleapis.com/Repository resource.data blob. The git auth token
+// secret version, npmrc secret version, and SSH key material are intentionally
+// not decoded; the git remote URL is reduced to a host fingerprint and the
+// service account to an email fingerprint.
+type dataformRepositoryData struct {
+	GitRemoteSettings *struct {
+		URL           string `json:"url"`
+		DefaultBranch string `json:"defaultBranch"`
+	} `json:"gitRemoteSettings"`
+	ServiceAccount                string `json:"serviceAccount"`
+	WorkspaceCompilationOverrides *struct {
+		DefaultDatabase string `json:"defaultDatabase"`
+	} `json:"workspaceCompilationOverrides"`
+	KMSKeyName string `json:"kmsKeyName"`
+	CreateTime string `json:"createTime"`
+}
+
+// extractDataformRepository extracts bounded, redaction-safe typed depth for one
+// Dataform Repository CAI asset. It returns the Terraform/drift/monitoring
+// attribute set (git default branch, git-remote host fingerprint, fingerprinted
+// runtime service-account email, workspace default database, CMEK posture, and
+// creation time), the CMEK CryptoKey and fingerprinted anchors, and the optional
+// typed CMEK edge.
+func extractDataformRepository(ctx ExtractContext) (AttributeExtraction, error) {
+	var data dataformRepositoryData
+	if err := json.Unmarshal(ctx.Data, &data); err != nil {
+		return AttributeExtraction{}, fmt.Errorf("decode dataform repository data: %w", err)
+	}
+
+	hostFP := dataformGitHostFingerprint(gitRemoteURL(data))
+	attrs := dataformRepositoryAttributes(data, hostFP)
+
+	var anchors []string
+	var rels []RelationshipObservation
+	if hostFP != "" {
+		anchors = append(anchors, hostFP)
+	}
+	if saFP := GCPServiceAccountEmailDigest(data.ServiceAccount); saFP != "" {
+		anchors = append(anchors, saFP)
+	}
+	if kms := dataformKMSKeyFullName(data.KMSKeyName); kms != "" {
+		anchors = append(anchors, kms)
+		rels = append(rels, dataformRepositoryEdge(ctx, catalog.RelationshipTypeRepositoryEncryptedByKMSKey, kms, assetTypeKMSCryptoKey))
+	}
+
+	return AttributeExtraction{
+		Attributes:         attrs,
+		CorrelationAnchors: dedupeNonEmpty(anchors),
+		Relationships:      rels,
+	}, nil
+}
+
+// dataformRepositoryAttributes assembles the bounded attribute map. Empty or
+// absent fields are omitted rather than written as zero values so a partial CAI
+// page does not fabricate a posture.
+func dataformRepositoryAttributes(data dataformRepositoryData, gitHostFingerprint string) map[string]any {
+	attrs := map[string]any{}
+
+	if g := data.GitRemoteSettings; g != nil {
+		if v := strings.TrimSpace(g.DefaultBranch); v != "" {
+			attrs["git_default_branch"] = v
+		}
+	}
+	if gitHostFingerprint != "" {
+		attrs["git_remote_host_fingerprint"] = gitHostFingerprint
+	}
+	if fp := GCPServiceAccountEmailDigest(data.ServiceAccount); fp != "" {
+		attrs["service_account_fingerprint"] = fp
+	}
+	if w := data.WorkspaceCompilationOverrides; w != nil {
+		// defaultDatabase is the compilation target project/dataset name (a GCP
+		// project-class identifier that already appears throughout resource names),
+		// not a secret, so it is stored verbatim.
+		if v := strings.TrimSpace(w.DefaultDatabase); v != "" {
+			attrs["workspace_default_database"] = v
+		}
+	}
+	if strings.TrimSpace(data.KMSKeyName) != "" {
+		attrs["customer_managed_encryption"] = true
+	}
+	if v, ok := normalizeRFC3339(data.CreateTime); ok {
+		attrs["creation_time"] = v
+	}
+	return attrs
+}
+
+// gitRemoteURL returns the configured git remote URL, or "".
+func gitRemoteURL(data dataformRepositoryData) string {
+	if data.GitRemoteSettings == nil {
+		return ""
+	}
+	return data.GitRemoteSettings.URL
+}
+
+// dataformGitHostFingerprint reduces a git remote URL to a deterministic
+// fingerprint of its host so repositories sharing a git host can be correlated
+// without persisting the raw URL or host (a DNS name the collector contract
+// fingerprints). The path (org/repo) and any embedded credentials are dropped.
+// A blank URL or one with no host fingerprints to "".
+func dataformGitHostFingerprint(rawURL string) string {
+	host := gitRemoteHost(rawURL)
+	if host == "" {
+		return ""
+	}
+	return "sha256:" + stableID("GCPDataformGitRemoteHost", map[string]any{"host": host})
+}
+
+// dataformKMSKeyFullName builds the CAI CryptoKey full resource name from a
+// relative KMS key name. An already-normalized CAI full resource name is
+// returned unchanged. It returns "" for a blank reference.
+func dataformKMSKeyFullName(kmsKeyName string) string {
+	trimmed := strings.TrimSpace(kmsKeyName)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.HasPrefix(trimmed, "//") {
+		return trimmed
+	}
+	// TrimPrefix guards against a hypothetical leading slash on the relative
+	// resource name (Dataform reports it without one); the // form is already
+	// handled above so the prefix is never doubled.
+	return cloudKMSResourceNamePrefix + strings.TrimPrefix(trimmed, "/")
+}
+
+// dataformRepositoryEdge builds one typed provider relationship observation
+// anchored on the repository's CAI full resource name.
+func dataformRepositoryEdge(ctx ExtractContext, relationshipType, targetName, targetType string) RelationshipObservation {
+	return RelationshipObservation{
+		SourceFullResourceName: ctx.FullResourceName,
+		SourceAssetType:        ctx.AssetType,
+		RelationshipType:       relationshipType,
+		TargetFullResourceName: targetName,
+		TargetAssetType:        targetType,
+		SupportState:           RelationshipSupportSupported,
+	}
+}

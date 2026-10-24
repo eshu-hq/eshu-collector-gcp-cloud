@@ -1,0 +1,166 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025-2026 eshu-hq
+
+package gcpcloud //nolint:dirgate // #6696 wave-1: flat extractor moves to extractor/<group> in a later slice
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/eshu-hq/eshu-collector-gcp-cloud/gcpcloud/catalog"
+)
+
+func init() {
+	RegisterAssetExtractor(catalog.AssetTypeBigQueryTransferConfig, extractBigQueryTransferConfig)
+}
+
+// bigQueryTransferConfigData is the bounded view of a CAI
+// bigquerydatatransfer.googleapis.com/TransferConfig resource.data blob. The
+// params map (user-authored query text, source object paths, and other
+// data-source-specific values) is intentionally not decoded and never persisted.
+type bigQueryTransferConfigData struct {
+	DataSourceID         string `json:"dataSourceId"`
+	DestinationDatasetID string `json:"destinationDatasetId"`
+	Schedule             string `json:"schedule"`
+	State                string `json:"state"`
+	Disabled             *bool  `json:"disabled"`
+	OwnerInfo            *struct {
+		Email string `json:"email"`
+	} `json:"ownerInfo"`
+	NotificationTopic string `json:"notificationPubsubTopic"`
+	EncryptionConfig  *struct {
+		KMSKeyName string `json:"kmsKeyName"`
+	} `json:"encryptionConfiguration"`
+}
+
+// extractBigQueryTransferConfig extracts bounded, redaction-safe typed depth for
+// one BigQuery Data Transfer Config CAI asset. It returns the
+// Terraform/drift/monitoring attribute set (data source id, schedule, lifecycle
+// state, disabled posture, CMEK posture, and fingerprinted owner email) and the
+// typed destination-dataset, CMEK, and
+// notification-topic edges. The transfer params are never read.
+func extractBigQueryTransferConfig(ctx ExtractContext) (AttributeExtraction, error) {
+	var data bigQueryTransferConfigData
+	if err := json.Unmarshal(ctx.Data, &data); err != nil {
+		return AttributeExtraction{}, fmt.Errorf("decode bigquery transfer config data: %w", err)
+	}
+
+	attrs := bigQueryTransferConfigAttributes(data)
+
+	var anchors []string
+	var rels []RelationshipObservation
+	if dataset := bigQueryTransferConfigDatasetFullName(ctx, data); dataset != "" {
+		anchors = append(anchors, dataset)
+		rels = append(rels, bigQueryTransferConfigEdge(ctx, catalog.RelationshipTypeTransferConfigWritesToDataset, dataset, catalog.AssetTypeBigQueryDataset))
+	}
+	if fp := GCPServiceAccountEmailDigest(transferConfigOwnerEmail(data)); fp != "" {
+		anchors = append(anchors, fp)
+	}
+	if topic := pubSubTopicRefFullName(data.NotificationTopic); topic != "" {
+		anchors = append(anchors, topic)
+		rels = append(rels, bigQueryTransferConfigEdge(ctx, catalog.RelationshipTypeTransferConfigNotifiesTopic, topic, assetTypePubSubTopic))
+	}
+	if data.EncryptionConfig != nil {
+		if kms := bigQueryTransferConfigKMSKeyFullName(data.EncryptionConfig.KMSKeyName); kms != "" {
+			anchors = append(anchors, kms)
+			rels = append(rels, bigQueryTransferConfigEdge(ctx, catalog.RelationshipTypeTransferConfigEncryptedByKMSKey, kms, assetTypeKMSCryptoKey))
+		}
+	}
+
+	return AttributeExtraction{
+		Attributes:         attrs,
+		CorrelationAnchors: dedupeNonEmpty(anchors),
+		Relationships:      rels,
+	}, nil
+}
+
+// bigQueryTransferConfigAttributes assembles the bounded attribute map. Empty,
+// absent, or default-valued fields are omitted rather than written as zero
+// values so a partial CAI page does not fabricate a posture.
+func bigQueryTransferConfigAttributes(data bigQueryTransferConfigData) map[string]any {
+	attrs := map[string]any{}
+
+	if v := strings.TrimSpace(data.DataSourceID); v != "" {
+		attrs["data_source_id"] = v
+	}
+	if v := strings.TrimSpace(data.Schedule); v != "" {
+		attrs["schedule"] = v
+	}
+	if v := strings.TrimSpace(data.State); v != "" {
+		attrs["state"] = v
+	}
+	if data.Disabled != nil {
+		attrs["disabled"] = *data.Disabled
+	}
+	if data.EncryptionConfig != nil && strings.TrimSpace(data.EncryptionConfig.KMSKeyName) != "" {
+		attrs["customer_managed_encryption"] = true
+	}
+	if fp := GCPServiceAccountEmailDigest(transferConfigOwnerEmail(data)); fp != "" {
+		attrs["owner_email_fingerprint"] = fp
+	}
+	return attrs
+}
+
+// transferConfigOwnerEmail returns the transfer config owner email
+// (ownerInfo.email) — the identity the transfer runs as, which is a service
+// account email when the config was created with one and a user email
+// otherwise. serviceAccountName is a create/patch request parameter, not a field
+// on the returned resource, so it is not used here.
+func transferConfigOwnerEmail(data bigQueryTransferConfigData) string {
+	if data.OwnerInfo == nil {
+		return ""
+	}
+	return data.OwnerInfo.Email
+}
+
+// bigQueryTransferConfigDatasetFullName builds the destination dataset CAI full
+// resource name from destinationDatasetId, resolved against the transfer
+// config's own project. It returns "" when no destination dataset is set.
+//
+// destinationDatasetId is a bare dataset id with no project qualifier, and the
+// BigQuery Data Transfer resource exposes no separate destination-project field:
+// verified against the live datatransfer v1 discovery document
+// (destinationDatasetId is documented only as "The BigQuery target dataset id.")
+// and the googleapis transfer.proto. A cross-project transfer config is created
+// inside its destination project — its own resource name embeds that project —
+// so the config's own project (ctx.ProjectID) is the destination project by
+// GCP's resource model, for both same-project and cross-region/cross-project
+// copy configs. params carries only source-side ids for a copy job and is never
+// decoded. Resolving against ctx.ProjectID is therefore correct, not a fallback;
+// #4469 confirmed CAI surfaces no cross-project destination signal to prefer.
+func bigQueryTransferConfigDatasetFullName(ctx ExtractContext, data bigQueryTransferConfigData) string {
+	dataset := strings.TrimSpace(data.DestinationDatasetID)
+	project := strings.TrimSpace(ctx.ProjectID)
+	if dataset == "" || project == "" {
+		return ""
+	}
+	return fmt.Sprintf("%sprojects/%s/datasets/%s", catalog.BigQueryResourceNamePrefix, project, dataset)
+}
+
+// bigQueryTransferConfigKMSKeyFullName builds the CAI CryptoKey full resource
+// name from a relative KMS key name. An already-normalized CAI full resource
+// name is returned unchanged. It returns "" for a blank reference.
+func bigQueryTransferConfigKMSKeyFullName(kmsKeyName string) string {
+	trimmed := strings.TrimSpace(kmsKeyName)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.HasPrefix(trimmed, "//") {
+		return trimmed
+	}
+	return cloudKMSResourceNamePrefix + strings.TrimPrefix(trimmed, "/")
+}
+
+// bigQueryTransferConfigEdge builds one typed provider relationship observation
+// anchored on the transfer config's CAI full resource name.
+func bigQueryTransferConfigEdge(ctx ExtractContext, relationshipType, targetName, targetType string) RelationshipObservation {
+	return RelationshipObservation{
+		SourceFullResourceName: ctx.FullResourceName,
+		SourceAssetType:        ctx.AssetType,
+		RelationshipType:       relationshipType,
+		TargetFullResourceName: targetName,
+		TargetAssetType:        targetType,
+		SupportState:           RelationshipSupportSupported,
+	}
+}
