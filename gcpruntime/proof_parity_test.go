@@ -20,6 +20,7 @@ import (
 	"github.com/eshu-hq/eshu-sdk/factschema/fixturepack"
 
 	"github.com/eshu-hq/eshu-collector-gcp-cloud/gcpcloud"
+	"github.com/eshu-hq/eshu-collector-gcp-cloud/gcpcloud/catalog"
 )
 
 // This file is new in the extraction: it is the #4047 cutover gate's
@@ -360,6 +361,86 @@ func TestExtractedSDKResultBoundary(t *testing.T) {
 	exhausted := ExhaustedResult(claim)
 	if exhausted.State != sdkcollector.ResultComplete || len(exhausted.Facts) != 0 {
 		t.Fatalf("ExhaustedResult = %#v, want complete with zero facts", exhausted)
+	}
+}
+
+// TestExtractedPartialScopeMapsToPartialResult proves the documented
+// forbidden/partial mapping end to end: a warning-bearing scope marks its
+// snapshot partial, and ToSDKResult converts that into a partial Result with
+// a warning Status. It covers both warning shapes: the quota provider
+// warning and the stale-fencing warning.
+func TestExtractedPartialScopeMapsToPartialResult(t *testing.T) {
+	t.Parallel()
+
+	t.Run("quota warning", func(t *testing.T) {
+		t.Parallel()
+		src := newSource(t, testConfig(testScope()), warningProvider{
+			warning: ProviderWarning{
+				WarningKind: catalog.WarningKindQuota,
+				Outcome:     catalog.OutcomeUnavailable,
+				Reason:      "cloud asset inventory throttle exhausted",
+				Retryable:   true,
+			},
+		}, nil)
+		collected, ok, err := src.Next(context.Background())
+		if err != nil || !ok {
+			t.Fatalf("Next: ok=%v err=%v", ok, err)
+		}
+		assertPartialResult(t, proofClaim(collected.Scope, collected.Generation, 7), collected)
+	})
+
+	t.Run("stale fencing", func(t *testing.T) {
+		t.Parallel()
+		representative, _, _ := proof8856Scopes()
+		resolved := representative.withDefaults()
+		source := proof8856LiveSource(t)
+		if err := source.Tracker.Accept(resolved.ScopeID, "gen-8856-newer", resolved.FencingToken+1); err != nil {
+			t.Fatalf("pre-accept newer token: %v", err)
+		}
+		collected, ok, err := source.Next(context.Background())
+		if err != nil || !ok {
+			t.Fatalf("stale Next() = (%v, %v), want (true, nil)", ok, err)
+		}
+		assertPartialResult(t, proofClaim(collected.Scope, collected.Generation, 7), collected)
+	})
+}
+
+// assertPartialResult fails unless the snapshot is marked partial and its
+// SDK conversion is a partial Result with exactly one warning Status whose
+// warning count matches the warning facts carried in-band.
+func assertPartialResult(t *testing.T, claim sdkcollector.Claim, collected CollectedSnapshot) {
+	t.Helper()
+	if !collected.Partial {
+		t.Fatal("warning-bearing snapshot Partial = false, want true")
+	}
+	result, err := ToSDKResult(claim, collected)
+	if err != nil {
+		t.Fatalf("ToSDKResult() error = %v", err)
+	}
+	if result.State != sdkcollector.ResultPartial {
+		t.Fatalf("State = %q, want partial for the warning-bearing scope", result.State)
+	}
+	if len(result.Statuses) != 1 {
+		t.Fatalf("Statuses = %d, want exactly the warning status", len(result.Statuses))
+	}
+	status := result.Statuses[0]
+	if status.Class != sdkcollector.StatusWarning || !status.Partial {
+		t.Fatalf("Status = %#v, want warning class with partial set", status)
+	}
+	warnings := 0
+	for _, envelope := range collected.Envelopes {
+		if envelope.FactKind == gcpcloud.GCPCollectionWarningFactKind {
+			warnings++
+		}
+	}
+	if warnings == 0 {
+		t.Fatal("snapshot carries no warning facts, want the in-band evidence")
+	}
+	if status.WarningCount != warnings {
+		t.Fatalf("WarningCount = %d, want %d warning facts", status.WarningCount, warnings)
+	}
+	if len(result.Facts) != len(collected.Envelopes) {
+		t.Fatalf("Facts = %d, want %d (1:1 envelope mapping)", len(result.Facts), len(collected.Envelopes))
 	}
 }
 

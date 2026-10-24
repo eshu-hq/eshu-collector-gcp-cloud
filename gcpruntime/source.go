@@ -132,7 +132,10 @@ func (s *Source) collectScope(ctx context.Context, scopeCfg ScopeConfig) (Collec
 	s.logScope(ctx, scopeCfg, generation)
 
 	scopeValue, generationValue := s.scopeAndGeneration(scopeCfg, generationID, observedAt)
-	return CollectedSnapshot{Scope: scopeValue, Generation: generationValue, Envelopes: envelopes}, nil
+	// The wire partial flag mirrors the claim status above: a scope that
+	// yields coverage warnings is partial, so the SDK Result carries the
+	// warning Status instead of reporting complete.
+	return CollectedSnapshot{Scope: scopeValue, Generation: generationValue, Envelopes: envelopes, Partial: generation.WarningCount() > 0}, nil
 }
 
 // drainPages walks every page for a scope through the provider, resuming from
@@ -211,7 +214,9 @@ func (s *Source) staleGeneration(
 	s.recordClaim(ctx, catalog.ClaimStatusPartial)
 
 	scopeValue, generationValue := s.scopeAndGeneration(scopeCfg, generationID, observedAt)
-	return CollectedSnapshot{Scope: scopeValue, Generation: generationValue, Envelopes: []gcpcloud.Envelope{envelope}}, nil
+	// A fencing rejection yields only the stale warning: the snapshot is
+	// partial, matching the partial claim recorded above.
+	return CollectedSnapshot{Scope: scopeValue, Generation: generationValue, Envelopes: []gcpcloud.Envelope{envelope}, Partial: true}, nil
 }
 
 func (s *Source) expiredTokenWarning(scopeCfg ScopeConfig, generation *gcpcloud.Generation) gcpcloud.WarningObservation {
