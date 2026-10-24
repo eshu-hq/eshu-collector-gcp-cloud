@@ -1,0 +1,160 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025-2026 eshu-hq
+
+package gcpcloud
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/eshu-hq/eshu-collector-gcp-cloud/gcpcloud/catalog"
+	"github.com/eshu-hq/eshu-collector-gcp-cloud/redact"
+	"github.com/eshu-hq/eshu-sdk/factschema"
+	gcpv1 "github.com/eshu-hq/eshu-sdk/factschema/gcp/v1"
+)
+
+// The tag redaction reason lives in the catalog leaf (#6696, slice L).
+
+// TagObservation is one GCP resource's tag/label evidence. The collector keeps
+// the tag keys (not sensitive) and fingerprints every tag value with the
+// redaction key; tag value text never reaches durable facts.
+type TagObservation struct {
+	// Boundary carries the scope and generation contract fields.
+	Boundary Boundary
+	// FullResourceName is the CAI full resource name carrying the tags.
+	FullResourceName string
+	// AssetType is the CAI asset type of the resource.
+	AssetType string
+	// Tags maps tag key -> raw tag value; every value is fingerprinted.
+	Tags map[string]string
+	// SourceKind is the bounded tag source (e.g. "direct", "effective").
+	SourceKind string
+	// InheritanceState maps tag key -> bounded inheritance state. It is used for
+	// effective tag evidence to distinguish direct from inherited bindings.
+	InheritanceState map[string]string
+	// UpdateTime is the read/update time.
+	UpdateTime time.Time
+	// SourceRecordID overrides the default record id.
+	SourceRecordID string
+	// SourceURI is the bounded source URI.
+	SourceURI string
+}
+
+// NewTagObservationEnvelope builds the durable gcp_tag_observation fact for one
+// resource's tags. Tag keys are preserved; every tag value is fingerprinted with
+// the redaction key, so no tag value text crosses into durable facts. The stable
+// fact key is derived from the resource identity and content family, so the
+// resource's tag fact upserts in place as tags change.
+//
+// It fails closed on a missing resource name, a missing asset type, no usable
+// tags, or a zero redaction key.
+func NewTagObservationEnvelope(obs TagObservation, key redact.Key) (Envelope, error) {
+	if err := validateBoundary(obs.Boundary); err != nil {
+		return Envelope{}, err
+	}
+	if key.IsZero() {
+		return Envelope{}, fmt.Errorf("gcp tag observation requires a redaction key")
+	}
+	fullName := strings.TrimSpace(obs.FullResourceName)
+	if fullName == "" {
+		return Envelope{}, fmt.Errorf("gcp tag observation requires full_resource_name")
+	}
+	assetType := strings.TrimSpace(obs.AssetType)
+	if assetType == "" {
+		return Envelope{}, fmt.Errorf("gcp tag observation requires asset_type")
+	}
+	fingerprints, tagKeys := fingerprintTagValues(obs.Tags, key)
+	if len(fingerprints) == 0 {
+		return Envelope{}, fmt.Errorf("gcp tag observation requires at least one tag")
+	}
+
+	stableKey := stableID(GCPTagObservationFactKind, map[string]any{
+		"full_resource_name": fullName,
+		"asset_type":         assetType,
+		"content_family":     obs.Boundary.ContentFamily,
+		"source_kind":        strings.TrimSpace(obs.SourceKind),
+	})
+
+	projectID := strings.TrimSpace(ProjectIDFromFullName(fullName))
+	sourceKind := strings.TrimSpace(obs.SourceKind)
+	payload, err := factschema.EncodeGCPTagObservation(gcpv1.TagObservation{
+		FullResourceName:       fullName,
+		AssetType:              assetType,
+		TagValueFingerprints:   fingerprints,
+		ProjectID:              &projectID,
+		TagKeys:                tagKeys,
+		SourceKind:             &sourceKind,
+		RedactionPolicyVersion: stringPtr(catalog.RedactionPolicyVersion),
+	})
+	if err != nil {
+		return Envelope{}, fmt.Errorf("encode gcp_tag_observation payload: %w", err)
+	}
+	addGCPBoundaryPayload(payload, obs.Boundary)
+	payload["read_time"] = timeOrNil(obs.Boundary.ReadTime)
+	payload["update_time"] = timeOrNil(obs.UpdateTime.UTC())
+	if inheritance := cleanInheritanceState(obs.InheritanceState, fingerprints); len(inheritance) > 0 {
+		payload["tag_inheritance_state"] = inheritance
+	}
+
+	return newEnvelope(
+		obs.Boundary,
+		GCPTagObservationFactKind,
+		GCPTagObservationSchemaVersion,
+		stableKey,
+		sourceRecordID(obs.SourceRecordID, fullName),
+		obs.SourceURI,
+		payload,
+	), nil
+}
+
+// fingerprintTagValues fingerprints every non-blank-keyed tag value and returns
+// the fingerprint map plus the sorted tag keys.
+func fingerprintTagValues(tags map[string]string, key redact.Key) (map[string]string, []string) {
+	if len(tags) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(tags))
+	for k, v := range tags {
+		trimmedKey := strings.TrimSpace(k)
+		if trimmedKey == "" {
+			continue
+		}
+		out[trimmedKey] = redact.String(v, catalog.RedactionReasonTagValue, "gcp_tag:"+trimmedKey, key).Marker
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	keys := make([]string, 0, len(out))
+	for k := range out {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return out, keys
+}
+
+func cleanInheritanceState(states map[string]string, fingerprints map[string]string) map[string]string {
+	if len(states) == 0 || len(fingerprints) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(states))
+	for key, state := range states {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, ok := fingerprints[key]; !ok {
+			continue
+		}
+		state = strings.TrimSpace(state)
+		switch state {
+		case "direct", "inherited":
+			out[key] = state
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}

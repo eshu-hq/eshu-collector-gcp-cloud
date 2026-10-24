@@ -1,0 +1,301 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025-2026 eshu-hq
+
+package gcpcloud
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/eshu-hq/eshu-collector-gcp-cloud/gcpcloud/catalog"
+	"github.com/eshu-hq/eshu-collector-gcp-cloud/redact"
+	"github.com/eshu-hq/eshu-sdk/factschema"
+	gcpv1 "github.com/eshu-hq/eshu-sdk/factschema/gcp/v1"
+)
+
+// The constructor below stamps the default provider-specific extension schema
+// version from the catalog leaf (#6696 slice L).
+
+// NewCloudResourceEnvelope builds the durable gcp_cloud_resource fact for one
+// Cloud Asset Inventory resource observation.
+//
+// Raw provider identity (the CAI full resource name) is preserved verbatim for
+// exact reducer joins, alongside normalized asset type, project id/number,
+// folder and organization ancestors, location, and source timestamps. Label
+// values named for fingerprinting are replaced with keyed redaction markers; the
+// versioned extension object carries only safe control-plane metadata. The
+// builder never accepts or persists raw IAM policy JSON, secret values, object
+// contents, or data-plane records.
+func NewCloudResourceEnvelope(boundary Boundary, obs ResourceObservation, key redact.Key) (Envelope, error) {
+	if err := validateBoundary(boundary); err != nil {
+		return Envelope{}, err
+	}
+	fullName := strings.TrimSpace(obs.Name)
+	if fullName == "" {
+		return Envelope{}, fmt.Errorf("gcp resource observation requires full_resource_name")
+	}
+	assetType := strings.TrimSpace(obs.AssetType)
+	if assetType == "" {
+		return Envelope{}, fmt.Errorf("gcp resource observation requires asset_type")
+	}
+
+	ancestry := NormalizeAncestry(obs.Ancestors)
+	projectID := strings.TrimSpace(ProjectIDFromFullName(fullName))
+	updateTime := obs.UpdateTime.UTC()
+
+	stableKey := stableID(GCPCloudResourceFactKind, map[string]any{
+		"asset_type":         assetType,
+		"content_family":     boundary.ContentFamily,
+		"full_resource_name": fullName,
+		"update_time":        stableTimeKey(updateTime),
+	})
+
+	labels := FingerprintLabelValues(obs.Labels, fingerprintKeys(obs.LabelFingerprint), key)
+
+	projectIDPtr := projectID
+	location := strings.TrimSpace(obs.Location)
+	displayName := strings.TrimSpace(obs.DisplayName)
+	state := strings.TrimSpace(obs.State)
+	assetTypeFamily := boundary.AssetTypeFamily
+	attributes := map[string]any{
+		"collector_instance_id":    boundary.CollectorInstanceID,
+		"parent_scope_kind":        string(boundary.ParentScopeKind),
+		"parent_scope_id":          boundary.ParentScopeID,
+		"asset_type_family":        boundary.AssetTypeFamily,
+		"content_family":           boundary.ContentFamily,
+		"location_bucket":          boundary.LocationBucket,
+		"full_resource_name":       fullName,
+		"asset_type":               assetType,
+		"display_name":             strings.TrimSpace(obs.DisplayName),
+		"state":                    strings.TrimSpace(obs.State),
+		"location":                 strings.TrimSpace(obs.Location),
+		"project_id":               projectID,
+		"project_number":           ancestry.ProjectNumber,
+		"folder_numbers":           ancestry.FolderNumbers,
+		"organization_number":      ancestry.OrganizationNumber,
+		"ancestors":                ancestry.Chain,
+		"labels":                   labels,
+		"read_time":                timeOrNil(boundary.ReadTime),
+		"update_time":              timeOrNil(updateTime),
+		"update_time_present":      !updateTime.IsZero(),
+		"redaction_policy_version": catalog.RedactionPolicyVersion,
+		"extension":                extensionObject(obs),
+		"attributes":               cloneAnyMap(obs.Attributes),
+		"correlation_anchors":      cloneStrings(obs.CorrelationAnchors),
+	}
+	payload, err := factschema.EncodeGCPCloudResource(gcpv1.Resource{
+		FullResourceName:   fullName,
+		AssetType:          assetType,
+		ProjectID:          &projectIDPtr,
+		Location:           &location,
+		DisplayName:        &displayName,
+		State:              &state,
+		AssetTypeFamily:    &assetTypeFamily,
+		CorrelationAnchors: cloneStrings(obs.CorrelationAnchors),
+		Attributes:         attributes,
+	})
+	if err != nil {
+		return Envelope{}, fmt.Errorf("encode gcp_cloud_resource payload: %w", err)
+	}
+
+	return newEnvelope(
+		boundary,
+		GCPCloudResourceFactKind,
+		GCPCloudResourceSchemaVersion,
+		stableKey,
+		sourceRecordID(obs.SourceRecordID, fullName),
+		obs.SourceURI,
+		payload,
+	), nil
+}
+
+// NewCollectionWarningEnvelope builds the durable gcp_collection_warning fact
+// for one explicit partial, unsupported, stale, quota, permission-hidden, or
+// redaction coverage outcome.
+func NewCollectionWarningEnvelope(obs WarningObservation) (Envelope, error) {
+	if err := validateBoundary(obs.Boundary); err != nil {
+		return Envelope{}, err
+	}
+	if !ValidWarningKind(obs.WarningKind) {
+		return Envelope{}, fmt.Errorf("gcp warning observation has invalid warning_kind %q", obs.WarningKind)
+	}
+	if !ValidOutcome(obs.Outcome) {
+		return Envelope{}, fmt.Errorf("gcp warning observation has invalid outcome %q", obs.Outcome)
+	}
+
+	stableKey := stableID(GCPCollectionWarningFactKind, map[string]any{
+		"asset_type_family": obs.Boundary.AssetTypeFamily,
+		"content_family":    obs.Boundary.ContentFamily,
+		"generation_id":     obs.Boundary.GenerationID,
+		"outcome":           obs.Outcome,
+		"parent_scope_id":   obs.Boundary.ParentScopeID,
+		"warning_kind":      obs.WarningKind,
+	})
+
+	hiddenCount := int64(obs.HiddenCount)
+	payload, err := factschema.EncodeGCPCollectionWarning(gcpv1.CollectionWarning{
+		WarningKind: obs.WarningKind,
+		Outcome:     obs.Outcome,
+		Reason:      stringPtr(strings.TrimSpace(obs.Reason)),
+		Retryable:   &obs.Retryable,
+		HiddenCount: &hiddenCount,
+	})
+	if err != nil {
+		return Envelope{}, fmt.Errorf("encode gcp_collection_warning payload: %w", err)
+	}
+	addGCPBoundaryPayload(payload, obs.Boundary)
+	payload["read_time"] = timeOrNil(obs.Boundary.ReadTime)
+	payload["hidden_count"] = obs.HiddenCount
+
+	return newEnvelope(
+		obs.Boundary,
+		GCPCollectionWarningFactKind,
+		GCPCollectionWarningSchemaVersion,
+		stableKey,
+		sourceRecordID(obs.SourceRecordID, obs.WarningKind+":"+obs.Outcome),
+		obs.SourceURI,
+		payload,
+	), nil
+}
+
+func newEnvelope(
+	boundary Boundary,
+	factKind string,
+	schemaVersion string,
+	stableKey string,
+	sourceRecordID string,
+	sourceURI string,
+	payload map[string]any,
+) Envelope {
+	observedAt := boundary.ObservedAt.UTC()
+	if observedAt.IsZero() {
+		observedAt = time.Now().UTC()
+	}
+	return Envelope{
+		FactID:           gcpFactID(factKind, stableKey, boundary.ScopeID, boundary.GenerationID),
+		ScopeID:          boundary.ScopeID,
+		GenerationID:     boundary.GenerationID,
+		FactKind:         factKind,
+		StableFactKey:    stableKey,
+		SchemaVersion:    schemaVersion,
+		CollectorKind:    catalog.CollectorKind,
+		FencingToken:     boundary.FencingToken,
+		SourceConfidence: SourceConfidenceReported,
+		ObservedAt:       observedAt,
+		Payload:          payload,
+		SourceRef: Ref{
+			SourceSystem:   catalog.CollectorKind,
+			ScopeID:        boundary.ScopeID,
+			GenerationID:   boundary.GenerationID,
+			FactKey:        stableKey,
+			SourceURI:      strings.TrimSpace(sourceURI),
+			SourceRecordID: sourceRecordID,
+		},
+	}
+}
+
+func gcpFactID(factKind, stableFactKey, scopeID, generationID string) string {
+	return stableID("GCPFact", map[string]any{
+		"fact_kind":       factKind,
+		"generation_id":   generationID,
+		"scope_id":        scopeID,
+		"stable_fact_key": stableFactKey,
+	})
+}
+
+func validateBoundary(boundary Boundary) error {
+	switch {
+	case strings.TrimSpace(boundary.CollectorInstanceID) == "":
+		return fmt.Errorf("gcp observation requires collector_instance_id")
+	case !boundary.ParentScopeKind.Valid():
+		return fmt.Errorf("gcp observation has invalid parent_scope_kind %q", boundary.ParentScopeKind)
+	case strings.TrimSpace(boundary.ParentScopeID) == "":
+		return fmt.Errorf("gcp observation requires parent_scope_id")
+	case strings.TrimSpace(boundary.ScopeID) == "":
+		return fmt.Errorf("gcp observation requires scope_id")
+	case strings.TrimSpace(boundary.GenerationID) == "":
+		return fmt.Errorf("gcp observation requires generation_id")
+	case boundary.FencingToken <= 0:
+		return fmt.Errorf("gcp observation fencing_token must be positive")
+	default:
+		return nil
+	}
+}
+
+func extensionObject(obs ResourceObservation) map[string]any {
+	version := strings.TrimSpace(obs.ExtensionVersion)
+	if version == "" {
+		version = catalog.ExtensionSchemaVersionDefault
+	}
+	ext := map[string]any{"schema_version": version}
+	for k, v := range obs.Extension {
+		if k == "schema_version" {
+			continue
+		}
+		ext[k] = v
+	}
+	return ext
+}
+
+// cloneAnyMap returns a shallow copy of a bounded attribute map, or nil when the
+// input is empty, so an empty extraction omits the attributes field rather than
+// emitting an empty object. The extractor only places scalars and string slices
+// in the map, so a shallow copy is sufficient to decouple the payload from the
+// observation.
+func cloneAnyMap(input map[string]any) map[string]any {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(input))
+	for k, v := range input {
+		out[k] = v
+	}
+	return out
+}
+
+func fingerprintKeys(input map[string]string) []string {
+	if len(input) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(input))
+	for k := range input {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+func sourceRecordID(candidate, fallback string) string {
+	candidate = strings.TrimSpace(candidate)
+	if candidate != "" {
+		return candidate
+	}
+	return strings.TrimSpace(fallback)
+}
+
+func addGCPBoundaryPayload(payload map[string]any, boundary Boundary) {
+	payload["collector_instance_id"] = boundary.CollectorInstanceID
+	payload["parent_scope_kind"] = string(boundary.ParentScopeKind)
+	payload["parent_scope_id"] = boundary.ParentScopeID
+	payload["asset_type_family"] = boundary.AssetTypeFamily
+	payload["content_family"] = boundary.ContentFamily
+	payload["location_bucket"] = boundary.LocationBucket
+}
+
+func stringPtr(value string) *string {
+	return &value
+}
+
+func stableTimeKey(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
+func timeOrNil(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.UTC()
+}

@@ -1,0 +1,197 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025-2026 eshu-hq
+
+package gcpcloud
+
+import (
+	"context"
+	"errors"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
+
+	"github.com/eshu-hq/eshu-collector-gcp-cloud/gcpcloud/catalog"
+)
+
+// Claim status values (catalog leaf, #6696 slice L) are bounded enums for the
+// claim lifecycle counter; attribute-extraction outcomes are bounded enums
+// for the typed-depth extractor counter. They are safe as telemetry labels.
+
+// Metrics holds the scoped OTEL instruments for the GCP cloud collector. Every
+// label is a bounded enum: collector kind, claim status, CAI operation, parent
+// scope kind, asset family, content family, status class, fact kind, warning
+// kind, and outcome. No instrument ever carries a full resource name, project
+// id, label value, IAM member, URL, or credential name.
+type Metrics struct {
+	claims               metric.Int64Counter
+	apiCalls             metric.Int64Counter
+	pages                metric.Int64Counter
+	pageResumes          metric.Int64Counter
+	factsEmitted         metric.Int64Counter
+	warnings             metric.Int64Counter
+	attributeExtractions metric.Int64Counter
+	freshnessLag         metric.Float64Histogram
+	collectorKind        string
+}
+
+// NewMetrics registers the GCP cloud collector instruments on a meter. It
+// returns an error when the meter is nil or instrument registration fails.
+func NewMetrics(meter metric.Meter) (*Metrics, error) {
+	if meter == nil {
+		return nil, errors.New("meter is required")
+	}
+	claims, err := meter.Int64Counter(
+		"eshu_dp_gcp_cloud_claims_total",
+		metric.WithDescription("GCP cloud collector claim lifecycle events by status"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	apiCalls, err := meter.Int64Counter(
+		"eshu_dp_gcp_cloud_api_calls_total",
+		metric.WithDescription("GCP Cloud Asset Inventory API calls by operation, scope kind, family, and status class"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	pages, err := meter.Int64Counter(
+		"eshu_dp_gcp_cloud_pages_total",
+		metric.WithDescription("GCP cloud collector response pages observed by parent scope kind"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	pageResumes, err := meter.Int64Counter(
+		"eshu_dp_gcp_cloud_page_token_resumes_total",
+		metric.WithDescription("GCP cloud collector continuation-token resumes by parent scope kind"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	factsEmitted, err := meter.Int64Counter(
+		"eshu_dp_gcp_cloud_facts_emitted_total",
+		metric.WithDescription("GCP cloud collector facts emitted by fact kind and parent scope kind"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	warnings, err := meter.Int64Counter(
+		"eshu_dp_gcp_cloud_warnings_total",
+		metric.WithDescription("GCP cloud collector partial, unsupported, stale, quota, and redaction warnings by kind and outcome"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	attributeExtractions, err := meter.Int64Counter(
+		"eshu_dp_gcp_cloud_attribute_extractions_total",
+		metric.WithDescription("GCP cloud collector per-asset-type typed-depth attribute extractions by asset family and outcome"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	freshnessLag, err := meter.Float64Histogram(
+		"eshu_dp_gcp_cloud_freshness_lag_seconds",
+		metric.WithDescription("GCP cloud collector freshness lag from provider update/read time to Eshu observation time"),
+		metric.WithUnit("s"),
+		// Provider-to-Eshu lag runs from seconds to a day; the OTEL default set
+		// is millisecond-scaled and cannot resolve it (#7084).
+		metric.WithExplicitBucketBoundaries(1, 5, 15, 30, 60, 300, 900, 1800, 3600, 7200, 21600, 86400),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &Metrics{
+		claims:               claims,
+		apiCalls:             apiCalls,
+		pages:                pages,
+		pageResumes:          pageResumes,
+		factsEmitted:         factsEmitted,
+		warnings:             warnings,
+		attributeExtractions: attributeExtractions,
+		freshnessLag:         freshnessLag,
+		collectorKind:        catalog.CollectorKind,
+	}, nil
+}
+
+// RecordClaim records one claim lifecycle event by bounded status.
+func (m *Metrics) RecordClaim(ctx context.Context, status string) {
+	m.claims.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("collector_kind", m.collectorKind),
+		attribute.String("status", status),
+	))
+}
+
+// RecordAPICall records one Cloud Asset Inventory API call. operation, scope
+// kind, asset family, content family, and statusClass must all be bounded enums.
+func (m *Metrics) RecordAPICall(ctx context.Context, operation string, scope ParentScopeKind, assetFamily, contentFamily, statusClass string) {
+	m.apiCalls.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("collector_kind", m.collectorKind),
+		attribute.String("operation", operation),
+		attribute.String("scope_kind", string(scope)),
+		attribute.String("kind", assetFamily),
+		attribute.String("resource_scope", contentFamily),
+		attribute.String("status_class", statusClass),
+	))
+}
+
+// RecordPage records one observed response page for a parent scope kind.
+func (m *Metrics) RecordPage(ctx context.Context, scope ParentScopeKind) {
+	m.pages.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("collector_kind", m.collectorKind),
+		attribute.String("scope_kind", string(scope)),
+	))
+}
+
+// RecordPageTokenResume records one continuation-token resume for a parent scope
+// kind.
+func (m *Metrics) RecordPageTokenResume(ctx context.Context, scope ParentScopeKind) {
+	m.pageResumes.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("collector_kind", m.collectorKind),
+		attribute.String("scope_kind", string(scope)),
+	))
+}
+
+// RecordFactsEmitted records facts emitted for a fact kind and parent scope kind.
+func (m *Metrics) RecordFactsEmitted(ctx context.Context, factKind string, scope ParentScopeKind, count int) {
+	if count <= 0 {
+		return
+	}
+	m.factsEmitted.Add(ctx, int64(count), metric.WithAttributes(
+		attribute.String("collector_kind", m.collectorKind),
+		attribute.String("fact_kind", factKind),
+		attribute.String("scope_kind", string(scope)),
+	))
+}
+
+// RecordWarning records one collection warning by bounded kind and outcome.
+func (m *Metrics) RecordWarning(ctx context.Context, warningKind, outcome string) {
+	m.warnings.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("collector_kind", m.collectorKind),
+		attribute.String("kind", warningKind),
+		attribute.String("outcome", outcome),
+	))
+}
+
+// RecordAttributeExtraction records one per-asset-type typed-depth extraction
+// outcome. assetFamily must be a bounded asset family (from AssetTypeFamily);
+// outcome must be ExtractionOutcomeExtracted or ExtractionOutcomeEmpty. No label
+// carries a resource name, project id, or attribute value.
+func (m *Metrics) RecordAttributeExtraction(ctx context.Context, assetFamily, outcome string) {
+	m.attributeExtractions.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("collector_kind", m.collectorKind),
+		attribute.String("kind", assetFamily),
+		attribute.String("outcome", outcome),
+	))
+}
+
+// RecordFreshnessLag records the freshness lag in seconds for a parent scope
+// kind. Negative lags are ignored to keep the histogram meaningful.
+func (m *Metrics) RecordFreshnessLag(ctx context.Context, scope ParentScopeKind, seconds float64) {
+	if seconds < 0 {
+		return
+	}
+	m.freshnessLag.Record(ctx, seconds, metric.WithAttributes(
+		attribute.String("collector_kind", m.collectorKind),
+		attribute.String("scope_kind", string(scope)),
+	))
+}

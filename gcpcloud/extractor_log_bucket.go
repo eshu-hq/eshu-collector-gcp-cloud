@@ -1,0 +1,91 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2025-2026 eshu-hq
+
+package gcpcloud //nolint:dirgate // #6696 wave-1: flat extractor moves to extractor/<group> in a later slice
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/eshu-hq/eshu-collector-gcp-cloud/gcpcloud/catalog"
+)
+
+func init() {
+	RegisterAssetExtractor(catalog.LogBucketAssetType, extractLogBucket)
+}
+
+// logBucketData is the bounded view of a CAI logging.googleapis.com/LogBucket
+// resource.data blob. Only redaction-safe control-plane posture is decoded; the
+// only cross-source reference pulled is the CMEK CryptoKey resource name (not key
+// material). Locked and AnalyticsEnabled are pointers so a present `false` is
+// distinguishable from an absent field.
+type logBucketData struct {
+	LifecycleState   string `json:"lifecycleState"`
+	RetentionDays    int    `json:"retentionDays"`
+	Locked           *bool  `json:"locked"`
+	AnalyticsEnabled *bool  `json:"analyticsEnabled"`
+	CreateTime       string `json:"createTime"`
+	CMEKSettings     *struct {
+		KMSKeyName string `json:"kmsKeyName"`
+	} `json:"cmekSettings"`
+}
+
+// extractLogBucket extracts bounded, redaction-safe typed depth for one CAI
+// Logging Log Bucket asset. It surfaces the lifecycle state, retention period,
+// locked and analytics posture, creation time, and CMEK posture; and emits the typed
+// log_bucket_encrypted_by_kms_key edge to the CMEK CryptoKey with the key
+// resource name as the correlation anchor.
+//
+// The bucket's linked analytics BigQuery datasets are separate Link
+// sub-resources (not on the bucket's own data) and its owning project is
+// base-observation ancestry, so the only outbound edge is the CMEK key.
+func extractLogBucket(ctx ExtractContext) (AttributeExtraction, error) {
+	var data logBucketData
+	if err := json.Unmarshal(ctx.Data, &data); err != nil {
+		return AttributeExtraction{}, fmt.Errorf("decode log bucket data: %w", err)
+	}
+
+	attrs := map[string]any{}
+	// LogBucket reports lifecycle under lifecycleState (DELETE_REQUESTED / FAILED
+	// / UPDATING / ACTIVE); the base observation only maps state/status, so capture
+	// it here or deletion/failure posture is lost in readback.
+	if v := strings.TrimSpace(data.LifecycleState); v != "" {
+		attrs["lifecycle_state"] = v
+	}
+	if data.RetentionDays > 0 {
+		attrs["retention_days"] = data.RetentionDays
+	}
+	if data.Locked != nil {
+		attrs["locked"] = *data.Locked
+	}
+	if data.AnalyticsEnabled != nil {
+		attrs["analytics_enabled"] = *data.AnalyticsEnabled
+	}
+	if v, ok := normalizeRFC3339(data.CreateTime); ok {
+		attrs["creation_time"] = v
+	}
+
+	var anchors []string
+	var rels []RelationshipObservation
+	if data.CMEKSettings != nil {
+		if keyName := cmekKeyFullResourceName(data.CMEKSettings.KMSKeyName); keyName != "" {
+			attrs["customer_managed_encryption"] = true
+			anchors = append(anchors, keyName)
+			rels = append(rels, RelationshipObservation{
+				SourceFullResourceName: ctx.FullResourceName,
+				SourceAssetType:        ctx.AssetType,
+				RelationshipType:       catalog.RelationshipTypeLogBucketEncryptedByKMSKey,
+				TargetFullResourceName: keyName,
+				TargetAssetType:        assetTypeKMSCryptoKey,
+				SupportState:           RelationshipSupportSupported,
+			})
+		}
+	}
+
+	return AttributeExtraction{
+		Attributes:         attrs,
+		CorrelationAnchors: anchors,
+		Relationships:      rels,
+	}, nil
+}
