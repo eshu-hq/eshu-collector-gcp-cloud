@@ -44,6 +44,7 @@ jobs:
       deps: ${{ steps.filter.outputs.deps }}
       workflow: ${{ steps.filter.outputs.workflow }}
       image: ${{ steps.filter.outputs.image }}
+      misc: ${{ steps.filter.outputs.misc }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -51,6 +52,9 @@ jobs:
       - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         id: filter
         with:
+          # Needed so the `misc` catch-all below can use `!` negations;
+          # groups without negations behave exactly as before.
+          predicate-quantifier: 'some-with-excludes'
           filters: |
             go:
               - '**/*.go'
@@ -75,11 +79,32 @@ jobs:
             image:
               - 'Dockerfile'
               - 'cmd/**'
+            misc:
+              # Fail-closed catch-all: anything not classified above runs
+              # the full Go lanes (lint+test+race). Docs stay skipped so a
+              # docs-only PR keeps passing vacuously (probe #3); every
+              # classified pattern is negated too so narrow lanes keep
+              # their shape. This classifies Makefile,
+              # .github/dependabot.yml, and all future file types.
+              - '**'
+              - '!**/*.md'
+              - '!LICENSE'
+              - '!CODEOWNERS'
+              - '!**/*.go'
+              - '!go.mod'
+              - '!go.sum'
+              - '!.golangci.yml'
+              - '!**/testdata/**'
+              - '!**/*.json'
+              - '!**/*.sh'
+              - '!Dockerfile'
+              - '!cmd/**'
+              - '!.github/workflows/**'
 
   lint:
     name: lint
     needs: [changes]
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.workflow == 'true' }}
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflow == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -126,7 +151,7 @@ jobs:
   test:
     name: test
     needs: [changes]
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.fixtures == 'true' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.workflow == 'true' }}
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.fixtures == 'true' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflow == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -144,7 +169,7 @@ jobs:
   race:
     name: race
     needs: [changes]
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.workflow == 'true' }}
+    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflow == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
