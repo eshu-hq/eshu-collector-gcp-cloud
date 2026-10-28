@@ -1,11 +1,12 @@
 # Org lint set for eshu-hq collector repos: govet, staticcheck,
-# ineffassign, unused, errcheck, gosimple; formatter gofumpt. Pinned to the
+# ineffassign, unused, errcheck; formatter gofumpt. Pinned to the
 # same golangci-lint version Eshu uses (v2.12.2). No exclusions.
 #
-# gosimple is not named below on purpose: golangci-lint v2 has no gosimple
-# linter (unknown-linter error), its S-series checks run inside staticcheck.
-# Proven: `golangci-lint run --no-config -E staticcheck` on a probe file
-# reports S1002 (should omit comparison to bool constant).
+# Note: the program epic's lint-set line also names gosimple, but do NOT add
+# a gosimple entry here — golangci-lint v2 has no such linter (adding it
+# fails with an unknown-linter error). Its S-series checks run inside
+# staticcheck. Proven: `golangci-lint run --no-config -E staticcheck` on a
+# probe file reports S1002 (should omit comparison to bool constant).
 version: "2"
 
 linters:
