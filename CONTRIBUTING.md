@@ -22,7 +22,9 @@ Pushes to `main` run every lane. A weekly schedule runs the `govulncheck` and
 
 `make ci` runs the `lint`, `test`, and `race` lane commands. The lint lane is
 `go vet`, `golangci-lint run` with the committed `.golangci.yml` (org set:
-govet, staticcheck, ineffassign, unused, errcheck; gofumpt formatting),
+govet, staticcheck, ineffassign, unused, errcheck; gofumpt formatting —
+golangci-lint v2 folds gosimple's S-checks into staticcheck, proven by an
+S1002 probe),
 `go mod tidy` drift, and the 500-line cap on `.go` files (plain `wc -l`, no
 allowlist). Coverage must stay at or above `COVERAGE_FLOOR=90` percent of
 statements; the floor only rises.
