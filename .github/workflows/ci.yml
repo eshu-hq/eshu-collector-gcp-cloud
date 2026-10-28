@@ -1,17 +1,29 @@
 name: ci
 
-# Org gate contract for eshu-hq collector repos (eshu-hq/eshu#8856 cutover
-# pre-work): stable job names lint/test/race/shell/image, a changes
-# path-filter job, and a ci-complete aggregator. ci-complete is the only
-# context the main ruleset requires. No static gates: lanes judge the code
-# itself, except the 500-line .go file cap (plain wc -l step in lint).
+# Thin caller over the org reusable Go collector CI
+# (eshu-hq/.github go-collector-ci.yml v2, pinned by peeled commit SHA with a
+# version comment, never the mutable tag). Lane bodies live in the reusable;
+# this file keeps only the paths-filter `changes` job, the single `go-ci`
+# call with run-* flags wired to the filter, a local `ci-complete`
+# aggregator, and a schedule-only `notify` that preserves the weekly
+# govulncheck/gosec issue-filing behavior.
+#
+# Stable job names: the reusable's inner lanes are lint, test, race, shell,
+# image, boundary, govulncheck, gosec, actionlint, ci-complete — identical to
+# the in-repo lanes they replace. `ci-complete` (the local aggregator below)
+# is the only context the main ruleset requires; the reusable's inner
+# `go-ci / ci-complete` is informational. No static gates: lanes judge the
+# code itself, except the 500-line .go file cap (plain wc -l in the reusable
+# lint lane). This repo ships no Dockerfile or cmd/, so run-image stays
+# false and the boundary hook proves that vacuity (it fails the day either
+# appears, until a real image lane replaces it).
 on:
   pull_request:
   push:
     branches: [main]
   schedule:
     # Weekly Monday 04:23 UTC sweep: govulncheck + gosec. Lane jobs also run
-    # as a post-merge record; only the two scan jobs can file issues.
+    # as a post-merge record; only the notify job can file issues.
     - cron: '23 4 * * 1'
 
 permissions:
@@ -20,14 +32,6 @@ permissions:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
-env:
-  COVERAGE_FLOOR: 90
-  GOLANGCI_LINT_VERSION: v2.12.2
-  GOVULNCHECK_VERSION: v1.9.0
-  GOSEC_VERSION: v2.30.0
-  SHELLCHECK_VERSION: 0.10.0
-  ACTIONLINT_VERSION: 1.7.9
 
 jobs:
   changes:
@@ -101,246 +105,40 @@ jobs:
               - '!cmd/**'
               - '!.github/workflows/**'
 
-  lint:
-    name: lint
+  go-ci:
+    name: go-ci
     needs: [changes]
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflow == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-      - name: go vet
-        run: go vet ./...
-      - name: Install golangci-lint
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${{ env.GOLANGCI_LINT_VERSION }}
-      - name: golangci-lint run
-        run: golangci-lint run ./...
-      - name: gofumpt format check
-        run: |
-          golangci-lint fmt --diff ./... > /tmp/fmt.diff || true
-          if [ -s /tmp/fmt.diff ]; then
-            cat /tmp/fmt.diff
-            echo 'unformatted files: run golangci-lint fmt -w ./...'
-            exit 1
-          fi
-      - name: go mod tidy check
-        run: go mod tidy -diff
-      - name: 500-line file cap
-        run: |
-          fail=0
-          for f in $(git ls-files '*.go'); do
-            lines=$(wc -l < "$f")
-            if [ "$lines" -gt 500 ]; then
-              echo "::error file=$f::over the 500-line cap ($lines lines): split the file"
-              fail=1
-            fi
-          done
-          exit $fail
-      - name: actionlint
-        if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.workflow == 'true' }}
-        run: |
-          curl -sSfL -o /tmp/actionlint.tar.gz "https://github.com/rhysd/actionlint/releases/download/v${{ env.ACTIONLINT_VERSION }}/actionlint_${{ env.ACTIONLINT_VERSION }}_linux_amd64.tar.gz"
-          tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
-          /tmp/actionlint .github/workflows/*.yml
-
-  test:
-    name: test
-    needs: [changes]
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.fixtures == 'true' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflow == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-      - name: go build
-        run: go build ./...
-      - name: go test
-        run: go test ./... -count=1
-
-  race:
-    name: race
-    needs: [changes]
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflow == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-      - name: go test -race with coverage
-        run: go test ./... -race -count=1 -covermode=atomic -coverprofile=coverage.out
-      - name: Upload coverage artifact
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: coverage
-          path: coverage.out
-          retention-days: 14
-      - name: Coverage summary and floor
-        env:
-          COVERAGE_FLOOR: ${{ env.COVERAGE_FLOOR }}
-        run: |
-          python3 - <<'EOF'
-          import collections
-          import os
-          import sys
-          floor = float(os.environ['COVERAGE_FLOOR'])
-          stats = collections.OrderedDict()
-          total = [0, 0]
-          with open('coverage.out') as fh:
-              for line in fh:
-                  parts = line.split()
-                  if len(parts) != 3:
-                      continue
-                  loc, num, cnt = parts
-                  try:
-                      path, _blk = loc.rsplit(':', 1)
-                      stmts = int(num)
-                      hits = int(cnt)
-                  except (IndexError, ValueError):
-                      continue
-                  pkg = path.rsplit('/', 1)[0]
-                  row = stats.setdefault(pkg, [0, 0])
-                  row[0] += stmts
-                  total[0] += stmts
-                  if hits > 0:
-                      row[1] += stmts
-                      total[1] += stmts
-          out = ['| Package | Statements | Covered |', '|---|---|---|']
-          for pkg, (t, c) in stats.items():
-              pct = 100.0 * c / t if t else 100.0
-              out.append(f'| `{pkg}` | {t} | {pct:.1f}% |')
-          tpct = 100.0 * total[1] / total[0]
-          out.append(f'| **TOTAL** | **{total[0]}** | **{tpct:.1f}%** |')
-          summary = '## Coverage\n\n' + '\n'.join(out) + '\n'
-          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as fh:
-              fh.write(summary)
-          print(summary)
-          if tpct < floor:
-              print(f'total {tpct:.1f}% is below COVERAGE_FLOOR={floor:g}')
-              sys.exit(1)
-          EOF
-
-  shell:
-    name: shell
-    needs: [changes]
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.shell == 'true' || needs.changes.outputs.workflow == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install shellcheck
-        run: |
-          curl -sSfL -o /tmp/shellcheck.tar.xz "https://github.com/koalaman/shellcheck/releases/download/v${{ env.SHELLCHECK_VERSION }}/shellcheck-v${{ env.SHELLCHECK_VERSION }}.linux.x86_64.tar.xz"
-          tar -xf /tmp/shellcheck.tar.xz -C /tmp
-          echo "/tmp/shellcheck-v${{ env.SHELLCHECK_VERSION }}" >> "$GITHUB_PATH"
-      - name: shellcheck
-        run: |
-          mapfile -t scripts < <(git ls-files '*.sh')
-          if [ ${#scripts[@]} -eq 0 ]; then
-            echo 'no shell scripts tracked: lane vacuously green'
-            exit 0
-          fi
-          shellcheck "${scripts[@]}"
-
-  image:
-    name: image
-    needs: [changes]
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.image == 'true' || needs.changes.outputs.go == 'true' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.workflow == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Vacuous image proof
-        run: |
-          # No Dockerfile and no cmd/ exist in this repo, so there is no
-          # image to build. If either appears, this lane fails until a real
-          # image build lane replaces this proof.
-          test ! -e Dockerfile || { echo 'Dockerfile exists: add a real image build lane'; exit 1; }
-          test ! -d cmd || { echo 'cmd/ exists: add a real image build lane'; exit 1; }
-          echo 'no Dockerfile or cmd/: no image to build (vacuous green)'
-
-  govulncheck:
-    name: govulncheck
-    needs: [changes]
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.workflow == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      issues: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-      - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@${{ env.GOVULNCHECK_VERSION }}
-      - name: govulncheck
-        run: govulncheck -scan package ./...
-      - name: File tracking issue on scheduled findings
-        if: ${{ failure() && github.event_name == 'schedule' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          title='govulncheck findings on the weekly sweep'
-          num=$(gh issue list --search "$title in:title" --state open --json number --jq '.[0].number // empty')
-          body="Weekly govulncheck sweep failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          if [ -z "$num" ]; then
-            gh issue create --title "$title" --body "$body"
-          else
-            gh issue comment "$num" --body "$body"
-          fi
-
-  gosec:
-    name: gosec
-    needs: [changes]
-    if: ${{ github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.workflow == 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      security-events: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-      - name: Install gosec
-        run: go install github.com/securego/gosec/v2/cmd/gosec@${{ env.GOSEC_VERSION }}
-      - name: gosec SARIF
-        # Advisory until the false-positive rate here is measured: findings
-        # are triaged in the open, never blanket-excluded. Gate on the SARIF
-        # result count, not gosec's exit code.
-        run: |
-          gosec -no-fail -fmt=sarif -out gosec.sarif ./...
-          test -f gosec.sarif
-          count=$(python3 -c "import json; print(sum(len(r.get('results', [])) for r in json.load(open('gosec.sarif'))['runs']))")
-          echo "gosec findings: $count" >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload SARIF
-        if: ${{ github.event.pull_request.head.repo.full_name == github.repository || github.event_name != 'pull_request' }}
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
-        with:
-          sarif_file: gosec.sarif
+    uses: eshu-hq/.github/.github/workflows/go-collector-ci.yml@4d01ab90baf5dd77c21cc1ee6bdf701332613449 # v2
+    with:
+      module: gcp-cloud
+      working-directory: .
+      go-version-file: go.mod
+      coverage-floor: 90
+      # No Dockerfile or cmd/ in this repo: the image lane stays off and the
+      # boundary hook below proves that vacuity instead.
+      run-image: false
+      run-lint: ${{ github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflow == 'true' }}
+      run-test: ${{ github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.fixtures == 'true' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflow == 'true' }}
+      run-race: ${{ github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflow == 'true' }}
+      run-shell: ${{ github.event_name != 'pull_request' || needs.changes.outputs.shell == 'true' || needs.changes.outputs.workflow == 'true' }}
+      run-boundary: ${{ github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflow == 'true' }}
+      boundary-command: >-
+        test ! -e Dockerfile && test ! -d cmd ||
+        { echo 'Dockerfile or cmd/ appeared: replace this vacuity proof with a real image lane'; exit 1; }
+      run-govulncheck: ${{ github.event_name != 'pull_request' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.workflow == 'true' }}
+      run-gosec: ${{ github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflow == 'true' }}
+      # Scheduled runs opt into failure so the notify job below can file the
+      # tracking issue; PR lanes stay advisory.
+      gosec-fail-on-findings: ${{ github.event_name == 'schedule' }}
+      run-actionlint: ${{ github.event_name != 'pull_request' || needs.changes.outputs.workflow == 'true' }}
+      # Tool pins match the pre-swap in-repo lane pins; the rest ride the
+      # reusable v2 defaults (golangci-lint v2.12.2, govulncheck v1.9.0,
+      # actionlint 1.7.12 sha256-checked).
+      gosec-version: v2.30.0
 
   ci-complete:
     name: ci-complete
-    needs: [changes, lint, test, race, shell, image, govulncheck, gosec]
+    needs: [changes, go-ci]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -364,3 +162,26 @@ jobs:
               sys.exit(1)
           print('ci-complete: every lane succeeded or was legitimately skipped')
           EOF
+
+  notify:
+    name: notify
+    needs: [go-ci]
+    if: ${{ failure() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: File tracking issue on scheduled findings
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          title='weekly sweep findings (govulncheck/gosec)'
+          num=$(gh issue list --search "$title in:title" --state open --json number --jq '.[0].number // empty')
+          body="Weekly sweep failed: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if [ -z "$num" ]; then
+            gh issue create --title "$title" --body "$body"
+          else
+            gh issue comment "$num" --body "$body"
+          fi
