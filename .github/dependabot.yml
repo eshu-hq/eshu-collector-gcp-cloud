@@ -16,3 +16,5 @@ updates:
       all:
         patterns:
           - '*'
+
+# CI proof: misc catch-all probe, closes unmerged (do not merge).
