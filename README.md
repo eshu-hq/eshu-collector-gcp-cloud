@@ -8,3 +8,6 @@ Eshu GCP cloud collector, extracted from the Eshu core repository.
 Extraction tracking: [eshu-hq/eshu#8856](https://github.com/eshu-hq/eshu/issues/8856).
 The in-tree extraction census, producer-grant draft, and parity proofs live
 in the core repository until the cutover rehearsal lands them here.
+
+Continuous integration runs the org gate lanes; see CONTRIBUTING.md.
+(This line is a CI lane-proof edit and will not merge.)
