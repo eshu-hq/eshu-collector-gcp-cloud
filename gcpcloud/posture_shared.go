@@ -4,8 +4,6 @@
 package gcpcloud
 
 import (
-	"fmt"
-	"sort"
 	"strings"
 	"time"
 )
@@ -97,25 +95,6 @@ func newPostureEnvelope(
 	}
 }
 
-func validateContext(ctx EnvelopeContext) error {
-	switch {
-	case strings.TrimSpace(ctx.AccountID) == "":
-		return fmt.Errorf("secrets iam observation requires account_id")
-	case strings.TrimSpace(ctx.Region) == "":
-		return fmt.Errorf("secrets iam observation requires region")
-	case strings.TrimSpace(ctx.ScopeID) == "":
-		return fmt.Errorf("secrets iam observation requires scope_id")
-	case strings.TrimSpace(ctx.GenerationID) == "":
-		return fmt.Errorf("secrets iam observation requires generation_id")
-	case strings.TrimSpace(ctx.CollectorInstanceID) == "":
-		return fmt.Errorf("secrets iam observation requires collector_instance_id")
-	case ctx.FencingToken <= 0:
-		return fmt.Errorf("secrets iam observation fencing_token must be positive")
-	default:
-		return nil
-	}
-}
-
 func secretsIAMFactID(factKind, stableFactKey, scopeID, generationID string) string {
 	return stableID("SecretsIAMFact", map[string]any{
 		"fact_kind":       factKind,
@@ -142,61 +121,6 @@ func WebIdentitySubjectFingerprint(subject string) string {
 	return "sha256:" + stableID("SecretsIAMWebIdentitySubject", map[string]any{
 		"subject": subject,
 	})
-}
-
-func normalizeEffect(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "allow":
-		return "Allow"
-	case "deny":
-		return "Deny"
-	default:
-		return ""
-	}
-}
-
-const wildcardAction = "*"
-
-func normalizeActionList(values []string) []string {
-	return normalizeStrings(values, strings.ToLower)
-}
-
-func normalizePatternList(values []string) []string {
-	return normalizeStrings(values, nil)
-}
-
-func normalizeKeyList(values []string) []string {
-	return normalizeStrings(values, nil)
-}
-
-func normalizeStrings(values []string, mapFn func(string) string) []string {
-	seen := make(map[string]struct{}, len(values))
-	output := make([]string, 0, len(values))
-	for _, value := range values {
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" {
-			continue
-		}
-		if mapFn != nil {
-			trimmed = mapFn(trimmed)
-		}
-		if _, ok := seen[trimmed]; ok {
-			continue
-		}
-		seen[trimmed] = struct{}{}
-		output = append(output, trimmed)
-	}
-	sort.Strings(output)
-	return output
-}
-
-func containsValue(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
 }
 
 func firstNonBlank(values ...string) string {
