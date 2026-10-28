@@ -4,10 +4,10 @@ github.com/buger/jsonparser v1.1.2 h1:frqHqw7otoVbk5M8LlE/L7HTnIq2v9RX6EJ48i9AxJ
 github.com/buger/jsonparser v1.1.2/go.mod h1:6RYKKt7H4d4+iWqouImQ9R2FZql3VbhNgx27UK13J/0=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
-github.com/eshu-hq/eshu-sdk/collector v0.1.0-rc.2 h1:ghCdpl0yi3r8lvsqu/1pWwJ6/UvAfNZNrnciwhs40M4=
-github.com/eshu-hq/eshu-sdk/collector v0.1.0-rc.2/go.mod h1:ysNLZcpQe9ZGYFZnTLyYTCHNaLrPRJjb1f9aLPOXdtA=
-github.com/eshu-hq/eshu-sdk/factschema v0.1.0-rc.2 h1:zgPRuX0OpqOpIO23Y9sp+nMd0x4Y9sNE3cnexgJWlp4=
-github.com/eshu-hq/eshu-sdk/factschema v0.1.0-rc.2/go.mod h1:CnwND1yYkq0K/gMO7k746nEKmTKvVCRYrHB3TZpsJqk=
+github.com/eshu-hq/eshu-sdk/collector v0.2.0-rc.1 h1:kisrSTkR+hWJyfpyeCTiCvAgS1bVc0L6AZFo7n4tfSc=
+github.com/eshu-hq/eshu-sdk/collector v0.2.0-rc.1/go.mod h1:ysNLZcpQe9ZGYFZnTLyYTCHNaLrPRJjb1f9aLPOXdtA=
+github.com/eshu-hq/eshu-sdk/factschema v0.1.0-rc.3 h1:ApspNBYiN3e2bHMfRiV72ikZMizoFFXAKRqzwi7JVw8=
+github.com/eshu-hq/eshu-sdk/factschema v0.1.0-rc.3/go.mod h1:CnwND1yYkq0K/gMO7k746nEKmTKvVCRYrHB3TZpsJqk=
 github.com/go-logr/logr v1.2.2/go.mod h1:jdQByPbusPIv2/zmleS9BjJVeZ6kBagPoEUsqbVz/1A=
 github.com/go-logr/logr v1.4.4 h1:tG4xh9yMsRCAiodLVTxyrkzSZ9+o0L1Kg/+cPVcbP/8=
 github.com/go-logr/logr v1.4.4/go.mod h1:9T104GzyrTigFIr8wt5mBrctHMim0Nb2HLGrmQ40KvY=
