@@ -25,3 +25,5 @@ test:
 
 race:
 	$(GO) test ./... -race -count=1
+
+# CI proof: misc catch-all probe, closes unmerged (do not merge).
