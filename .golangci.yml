@@ -1,0 +1,20 @@
+# Org lint set for eshu-hq collector repos: govet, staticcheck,
+# ineffassign, unused, errcheck; formatter gofumpt. Pinned to the same
+# golangci-lint version Eshu uses (v2.12.2). No exclusions.
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - govet
+    - staticcheck
+    - ineffassign
+    - unused
+    - errcheck
+
+formatters:
+  enable:
+    - gofumpt
+
+run:
+  timeout: 10m
