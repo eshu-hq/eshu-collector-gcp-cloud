@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/eshu-hq/eshu-collector-gcp-cloud/gcpcloud"
@@ -138,6 +139,32 @@ func (s *Source) collectScope(ctx context.Context, scopeCfg ScopeConfig) (Collec
 	return CollectedSnapshot{Scope: scopeValue, Generation: generationValue, Envelopes: envelopes, Partial: generation.WarningCount() > 0}, nil
 }
 
+// scopeSourceURI names the Cloud Asset Inventory collection scope a drain
+// reads: the assets.list endpoint qualified by the parent scope id, falling
+// back to the bare endpoint when the scope carries no parent identity. It
+// mirrors the warning observations' "cai://assets.list" base so resource and
+// warning facts share one source family.
+func scopeSourceURI(scopeCfg ScopeConfig) string {
+	if parent := strings.TrimSpace(scopeCfg.ParentScopeID); parent != "" {
+		return "cai://assets.list/" + parent
+	}
+	return "cai://assets.list"
+}
+
+// stampSourceURI fills a blank resource observation source URI with the
+// collection-scope URI so the SDK host validator — which requires every fact
+// source_ref.uri — accepts the result (eshu-hq/eshu#8856: blank URIs failed
+// every run terminally once generation binding landed). An extractor-set URI
+// wins; the stamp never overwrites one.
+func stampSourceURI(resources []gcpcloud.ResourceObservation, scopeCfg ScopeConfig) {
+	uri := scopeSourceURI(scopeCfg)
+	for i := range resources {
+		if strings.TrimSpace(resources[i].SourceURI) == "" {
+			resources[i].SourceURI = uri
+		}
+	}
+}
+
 // drainPages walks every page for a scope through the provider, resuming from
 // each page's continuation token until the scope is drained. A continuation
 // token that the provider cannot resume becomes a page_token_expired warning so
@@ -173,6 +200,7 @@ func (s *Source) drainPages(
 		}
 		s.recordPage(ctx, scopeCfg.ParentScopeKind)
 		generation.ObserveReadTime(page.ReadTime)
+		stampSourceURI(page.Resources, scopeCfg)
 		if addErr := generation.AddPage(page.Resources); addErr != nil {
 			return nil, fmt.Errorf("accumulate gcp page for parent scope kind %q: %w", scopeCfg.ParentScopeKind, addErr)
 		}
