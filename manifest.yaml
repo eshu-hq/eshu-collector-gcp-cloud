@@ -22,12 +22,10 @@ spec:
     adapter: process
   artifacts:
     - platform: linux/amd64
-      # Interim pin for the 0.1.4 release: the :main image built from the
-      # current main head (release 41508796546, with the #8856 source-URI
-      # stamp). Tagging publishes the final digest and the follow-up pin
-      # records it exactly; the seed installer stamps the deployed reference
-      # at install time.
-      image: ghcr.io/eshu-hq/eshu-collector-gcp-cloud@sha256:bdd93ea0d55dcaa3f236c8d6d902af07d61b94997823d74acff61d40d9da5b52
+      # Exact pin for the 0.1.4 release: the tagged image built from v0.1.4
+      # (source-URI stamp for eshu-hq/eshu#8856). The seed installer stamps
+      # the deployed reference at install time.
+      image: ghcr.io/eshu-hq/eshu-collector-gcp-cloud@sha256:06cc0b5747226adea1d753df61b097930bb8220e17c838346e6a1b2bec840a38
   emittedFacts:
     - kind: gcp_cloud_resource
       payloadSchemaRef: gcp_cloud_resource
