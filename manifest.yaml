@@ -4,12 +4,13 @@ metadata:
   id: collector-gcp-cloud
   name: GCP Cloud collector
   publisher: eshu-hq
-  version: 0.1.1
+  version: 0.1.2
 spec:
-  # compatibleCore is intentionally absent: this repository pins no core
-  # version range (README/CONTRIBUTING declare none), and a copied range
-  # would assert compatibility this satellite has not proven. The cutover
-  # rehearsal (eshu-hq/eshu#8856) sets it once a core floor is demonstrated.
+  # Floor demonstrated by the ops-qa cutover (eshu-hq/eshu#8856): the same
+  # range the sibling aws-cloud satellite declares, and the chart's
+  # install gate requires it (spec.compatibleCore is required on a dev
+  # core). The satellite speaks collector-sdk/v1alpha1 against that core.
+  compatibleCore: ">=0.0.5 <0.2.0"
   componentType: collector
   collectorKinds:
     - gcp
@@ -21,11 +22,11 @@ spec:
     adapter: process
   artifacts:
     - platform: linux/amd64
-      # Exact v0.1.1 pin: digest published by the v0.1.1 tag run
-      # (release 41457262744). Tag and main builds of the same commit are
-      # not bit-identical, so the pin always trails the tag; the seed
-      # installer stamps the deployed reference at install time.
-      image: ghcr.io/eshu-hq/eshu-collector-gcp-cloud@sha256:ac7a732025d5a9bf9158107056d4a7196ae4b109308058027ada0a5bf0efe5bf
+      # Interim pin for the 0.1.2 release: the :main image built from the
+      # current main head (release 41458725601). Tagging publishes the final
+      # digest and the follow-up pin records it exactly; the seed installer
+      # stamps the deployed reference at install time.
+      image: ghcr.io/eshu-hq/eshu-collector-gcp-cloud@sha256:0054185fa2e85f15e9b0ccc9e9f0a6284ad1f3dbbccc4d0b393bcda1655bbd38
   emittedFacts:
     - kind: gcp_cloud_resource
       payloadSchemaRef: gcp_cloud_resource
