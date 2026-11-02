@@ -21,11 +21,11 @@ spec:
     adapter: process
   artifacts:
     - platform: linux/amd64
-      # Exact pin for the 0.1.1 release: this is the exact tag-candidate
-      # digest published for :sha-1b6afc12ad4114cae8c3d1e8e1ad2670e16cb948
-      # by the main-push release run; the seed installer stamps the deployed
-      # reference at install time.
-      image: ghcr.io/eshu-hq/eshu-collector-gcp-cloud@sha256:af99470f1c7b6bba7b8a3e4e965dc13c24e28884187d55d3d1cc9ebc54763da5
+      # Exact v0.1.1 pin: digest published by the v0.1.1 tag run
+      # (release 41457262744). Tag and main builds of the same commit are
+      # not bit-identical, so the pin always trails the tag; the seed
+      # installer stamps the deployed reference at install time.
+      image: ghcr.io/eshu-hq/eshu-collector-gcp-cloud@sha256:ac7a732025d5a9bf9158107056d4a7196ae4b109308058027ada0a5bf0efe5bf
   emittedFacts:
     - kind: gcp_cloud_resource
       payloadSchemaRef: gcp_cloud_resource
