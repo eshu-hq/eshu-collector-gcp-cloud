@@ -40,19 +40,13 @@ func proofAttrKey(envelope gcpcloud.Envelope) string {
 		envelope.SourceConfidence + "\x00" + strconv.FormatInt(envelope.FencingToken, 10)
 }
 
-// proofWantCollectorKind pins the dual-collector-kind emission of this
-// source: gcp_* facts carry "gcp", while the secrets/IAM mirror facts it
-// also emits (gcp_iam_principal, gcp_iam_trust_policy,
-// gcp_iam_permission_policy) carry "secrets_iam_posture".
+// proofWantCollectorKind pins the re-stamped emission of this source
+// (eshu-hq/eshu#8856): every fact this collector emits carries "gcp",
+// including the secrets/IAM mirror facts (gcp_iam_principal,
+// gcp_iam_trust_policy, gcp_iam_permission_policy), whose SourceSystem stays
+// "secrets_iam_posture".
 func proofWantCollectorKind(factKind string) string {
-	switch factKind {
-	case gcpcloud.GCPIAMPrincipalFactKind,
-		gcpcloud.GCPIAMTrustPolicyFactKind,
-		gcpcloud.GCPIAMPermissionPolicyFactKind:
-		return PostureCollectorKind
-	default:
-		return CollectorKind
-	}
+	return CollectorKind
 }
 
 func loadProofOracle(t *testing.T) []proof8856ScopeSnapshot {

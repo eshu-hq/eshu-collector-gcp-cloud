@@ -64,12 +64,13 @@ func NewGCPTrustPolicyEnvelope(observation GCPTrustPolicyObservation) (Envelope,
 	if memberClass := strings.TrimSpace(observation.GCPWorkloadIdentityMemberClass); memberClass != "" {
 		payload["gcp_workload_identity_member_class"] = memberClass
 	}
-	return newPostureEnvelope(
+	env := newPostureEnvelope(
 		gcpToEnvelopeContext(observation.Context),
 		GCPIAMTrustPolicyFactKind,
 		stableKey,
 		sourceRecordID(observation.SourceRecordID, targetFingerprint+"|"+trustedFingerprint+"|"+role),
 		firstNonBlank(observation.SourceURI, observation.Context.SourceURI),
 		payload,
-	), nil
+	)
+	return restampMirrorEnvelope(env), nil
 }

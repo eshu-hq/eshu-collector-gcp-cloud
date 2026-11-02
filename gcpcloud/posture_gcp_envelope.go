@@ -36,14 +36,15 @@ func NewGCPPrincipalEnvelope(observation GCPPrincipalObservation) (Envelope, err
 	payload["principal_fingerprint"] = fingerprint
 	payload["principal_type"] = PrincipalTypeGCPServiceAccount
 	payload["member_class"] = memberClass
-	return newPostureEnvelope(
+	env := newPostureEnvelope(
 		gcpToEnvelopeContext(observation.Context),
 		GCPIAMPrincipalFactKind,
 		stableKey,
 		sourceRecordID(observation.SourceRecordID, fingerprint),
 		firstNonBlank(observation.SourceURI, observation.Context.SourceURI),
 		payload,
-	), nil
+	)
+	return restampMirrorEnvelope(env), nil
 }
 
 // NewGCPPermissionPolicyEnvelope builds the durable gcp_iam_permission_policy
@@ -93,14 +94,15 @@ func NewGCPPermissionPolicyEnvelope(observation GCPPermissionPolicyObservation) 
 	if conditionFingerprint != "" {
 		payload["condition_fingerprint"] = conditionFingerprint
 	}
-	return newPostureEnvelope(
+	env := newPostureEnvelope(
 		gcpToEnvelopeContext(observation.Context),
 		GCPIAMPermissionPolicyFactKind,
 		stableKey,
 		sourceRecordID(observation.SourceRecordID, fingerprint+"|"+role+"|"+resourceName),
 		firstNonBlank(observation.SourceURI, observation.Context.SourceURI),
 		payload,
-	), nil
+	)
+	return restampMirrorEnvelope(env), nil
 }
 
 // gcpCommonPayload stamps the GCP-native common fields onto a secrets/IAM
