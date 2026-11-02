@@ -8,7 +8,9 @@ import "fmt"
 // Provenance: ProviderWarning ported from
 // go/internal/collector/gcpcloud/gcpruntime/liveclient.go at core commit
 // 57d11add46. Only the warning carrier travels with this extraction; the
-// LiveClient REST transport stays in core until the live-backend phase.
+// LiveClient REST transport is ported (eshu-hq/eshu#8856): the collector
+// reads CAI directly over ADC. The retryable-transport follow-up stays
+// open (SHIM_MAP section 6.4): transport errors surface, not retries.
 
 // ProviderWarning is a bounded PageProvider coverage warning. Source converts
 // it into a durable gcp_collection_warning fact instead of treating expected

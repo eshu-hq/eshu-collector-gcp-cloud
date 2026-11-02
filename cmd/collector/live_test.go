@@ -197,11 +197,11 @@ func TestLiveCollectReadsKeyFromProcessEnv(t *testing.T) {
 	}
 }
 
-// TestLiveCollectFailsClosedWithoutTransport proves the live path fails
-// closed with a terminal result while the CAI transport stays in core: it
-// must never report complete with zero facts for a scope it did not read.
-func TestLiveCollectFailsClosedWithoutTransport(t *testing.T) {
-	t.Parallel()
+// TestLiveCollectFailsClosedWithoutCredentials proves the live path fails
+// closed with a terminal result when ADC has no usable credential: it must
+// never report complete with zero facts for a scope it did not read.
+func TestLiveCollectFailsClosedWithoutCredentials(t *testing.T) {
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/nonexistent-8856-credentials.json")
 
 	stdin := hostActivationRequest(hostActivationConfig())
 	plan, err := parseSDKStdio(&stdin)
@@ -213,7 +213,7 @@ func TestLiveCollectFailsClosedWithoutTransport(t *testing.T) {
 		t.Fatalf("collectLivePlan error = %v, want nil (terminal encodes, not errors)", err)
 	}
 	if result.State != sdk.ResultTerminal {
-		t.Fatalf("State = %q, want terminal while live transport is unavailable", result.State)
+		t.Fatalf("State = %q, want terminal without live credentials", result.State)
 	}
 	if len(result.Facts) != 0 {
 		t.Fatalf("facts = %d, want 0 on the fail-closed live path", len(result.Facts))
@@ -223,11 +223,52 @@ func TestLiveCollectFailsClosedWithoutTransport(t *testing.T) {
 	}
 	found := false
 	for _, status := range result.Statuses {
-		if status.FailureClass == "live-transport-unavailable" {
+		if status.FailureClass == "live-credential-unavailable" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("statuses = %+v, want the live-transport-unavailable failure class", result.Statuses)
+		t.Fatalf("statuses = %+v, want the live-credential-unavailable failure class", result.Statuses)
+	}
+}
+
+// TestLiveCollectRejectsMultiCredentialScopes proves one collect never mixes
+// ADC identities: scopes naming different credentials fail closed.
+func TestLiveCollectRejectsMultiCredentialScopes(t *testing.T) {
+	t.Parallel()
+
+	config := hostActivationConfig()
+	config["scopes"] = []any{
+		map[string]any{
+			"parent_scope_kind": "project",
+			"parent_scope_id":   "project-a",
+			"credential_ref":    "sa-a",
+		},
+		map[string]any{
+			"parent_scope_kind": "project",
+			"parent_scope_id":   "project-b",
+			"credential_ref":    "sa-b",
+		},
+	}
+	stdin := hostActivationRequest(config)
+	plan, err := parseSDKStdio(&stdin)
+	if err != nil {
+		t.Fatalf("parseSDKStdio(multi-scope config) error = %v", err)
+	}
+	result, _, err := collectLivePlanWithLookup(plan, func(string) (string, bool) { return "material", true })
+	if err != nil {
+		t.Fatalf("collectLivePlan error = %v, want nil (terminal encodes, not errors)", err)
+	}
+	if result.State != sdk.ResultTerminal {
+		t.Fatalf("State = %q, want terminal for multi-credential scopes", result.State)
+	}
+	found := false
+	for _, status := range result.Statuses {
+		if status.FailureClass == "multi-credential-activations-unsupported" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("statuses = %+v, want the multi-credential failure class", result.Statuses)
 	}
 }

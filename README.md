@@ -38,8 +38,9 @@ Operational notes: under the `process` adapter the host starts
 stdin, and reads one SDK result from stdout. `--previous-digest` (or the
 host `freshness.previousDigest`) short-circuits an unchanged scan to a
 fact-free `unchanged` result. The live claim path parses the host
-activation scopes and then fails closed with a terminal
-`live-transport-unavailable` result: the live CAI transport stays in core
-until the live-backend phase, so no claim ever reports complete for a
-scope it did not read. Producer grants and producer authority stay in core
-until the cutover above; this section covers the image vehicle only.
+activation scopes and reads them through the ported CAI transport
+(Application Default Credentials, GET-only `assets.list`); anything that
+cannot scan fails closed with a terminal result, so no claim ever reports
+complete for a scope it did not read. Producer grants and producer
+authority stay in core until the cutover above; this section covers the
+image vehicle only.

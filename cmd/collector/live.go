@@ -4,12 +4,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
 	collector "github.com/eshu-hq/eshu-collector-gcp-cloud"
+	"github.com/eshu-hq/eshu-collector-gcp-cloud/gcpcloud"
 	"github.com/eshu-hq/eshu-collector-gcp-cloud/gcpcloud/catalog"
 	"github.com/eshu-hq/eshu-collector-gcp-cloud/gcpruntime"
 	"github.com/eshu-hq/eshu-collector-gcp-cloud/redact"
@@ -163,19 +165,77 @@ func parseLiveScope(entry map[string]any) (gcpruntime.ScopeConfig, error) {
 }
 
 // collectLivePlan runs a bounded GCP claim from a parsed host activation.
-// The live CAI transport stays in core until the live-backend phase, so a
-// valid activation fails closed with a terminal result instead of reporting
-// complete with zero facts for a scope it did not read.
+// The CAI transport is the ported LiveClient (Application Default
+// Credentials, GET-only assets.list); anything that cannot scan fails
+// closed with a terminal result instead of reporting complete with zero
+// facts for a scope it did not read.
 func collectLivePlan(plan stdioPlan) (sdk.Result, string, error) {
 	return collectLivePlanWithLookup(plan, os.LookupEnv)
 }
 
 func collectLivePlanWithLookup(plan stdioPlan, lookup func(string) (string, bool)) (sdk.Result, string, error) {
-	if _, err := resolveLiveRedactionKey(plan.live.RedactionKeyEnv, lookup); err != nil {
+	key, err := resolveLiveRedactionKey(plan.live.RedactionKeyEnv, lookup)
+	if err != nil {
 		return sdk.Result{}, "", err
 	}
 	observedAt := time.Now().UTC()
-	return terminalResult(plan.claim, observedAt, "live-transport-unavailable"), "", nil
+	// One ADC identity per collect: scopes naming different credentials fail
+	// closed rather than mixing identities in one claim.
+	credentialRefs := map[string]bool{}
+	for _, scope := range plan.live.Scopes {
+		credentialRefs[strings.TrimSpace(scope.CredentialRef)] = true
+	}
+	if len(credentialRefs) != 1 {
+		return terminalResult(plan.claim, observedAt, "multi-credential-activations-unsupported"), "", nil
+	}
+	var credentialRef string
+	for ref := range credentialRefs {
+		credentialRef = ref
+	}
+	// Service-account ADC is its own quota consumer, so no quota project is
+	// configured; user-credential ADC resolves it from the environment.
+	client, err := gcpruntime.NewADCLiveClient(context.Background(), credentialRef, "")
+	if err != nil {
+		return terminalResult(plan.claim, observedAt, "live-credential-unavailable"), "", nil
+	}
+	config := gcpruntime.Config{
+		CollectorInstanceID: plan.live.CollectorInstanceID,
+		Scopes:              plan.live.Scopes,
+	}
+	source := &gcpruntime.Source{
+		Config:       config,
+		Provider:     client,
+		TagProvider:  client,
+		RedactionKey: key,
+	}
+	var envelopes []gcpcloud.Envelope
+	var first gcpruntime.CollectedSnapshot
+	partial := false
+	ctx := context.Background()
+	for {
+		snapshot, ok, err := source.Next(ctx)
+		if err != nil {
+			return sdk.Result{}, "", err
+		}
+		if !ok {
+			break
+		}
+		if first.Scope.ScopeID == "" {
+			first = snapshot
+		}
+		partial = partial || snapshot.Partial
+		envelopes = append(envelopes, snapshot.Envelopes...)
+	}
+	if len(envelopes) == 0 {
+		return terminalResult(plan.claim, observedAt, "live-scope-empty"), "", nil
+	}
+	if len(envelopes) > plan.live.Limits.MaxRecordsPerClaim {
+		return terminalResult(plan.claim, observedAt, "fact-budget-exceeded"), "", nil
+	}
+	merged := first
+	merged.Envelopes = envelopes
+	merged.Partial = partial
+	return collectSnapshotResult(plan.claim, merged, plan.live.Limits, plan.live.PreviousDigest, observedAt)
 }
 
 // resolveLiveRedactionKey obtains deployment key material only at the command
