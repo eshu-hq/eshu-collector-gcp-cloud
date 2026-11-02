@@ -4,7 +4,7 @@ metadata:
   id: collector-gcp-cloud
   name: GCP Cloud collector
   publisher: eshu-hq
-  version: 0.1.2
+  version: 0.1.3
 spec:
   # Floor demonstrated by the ops-qa cutover (eshu-hq/eshu#8856): the same
   # range the sibling aws-cloud satellite declares, and the chart's
@@ -22,11 +22,12 @@ spec:
     adapter: process
   artifacts:
     - platform: linux/amd64
-      # Interim pin for the 0.1.2 release: the :main image built from the
-      # current main head (release 41458725601). Tagging publishes the final
-      # digest and the follow-up pin records it exactly; the seed installer
-      # stamps the deployed reference at install time.
-      image: ghcr.io/eshu-hq/eshu-collector-gcp-cloud@sha256:0054185fa2e85f15e9b0ccc9e9f0a6284ad1f3dbbccc4d0b393bcda1655bbd38
+      # Interim pin for the 0.1.3 release: the :main image built from the
+      # current main head (release 41502670344, with the #8856 claim-binding
+      # fix). Tagging publishes the final digest and the follow-up pin
+      # records it exactly; the seed installer stamps the deployed reference
+      # at install time.
+      image: ghcr.io/eshu-hq/eshu-collector-gcp-cloud@sha256:ef614816c713c055f3373f516820929aadf881dc5ea6db6fe2483e638198f379
   emittedFacts:
     - kind: gcp_cloud_resource
       payloadSchemaRef: gcp_cloud_resource
