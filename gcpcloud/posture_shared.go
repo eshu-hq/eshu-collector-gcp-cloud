@@ -6,6 +6,8 @@ package gcpcloud
 import (
 	"strings"
 	"time"
+
+	"github.com/eshu-hq/eshu-collector-gcp-cloud/gcpcloud/catalog"
 )
 
 // Provenance: secrets/IAM posture shared core ported from
@@ -62,6 +64,18 @@ type EnvelopeContext struct {
 	FencingToken        int64
 	ObservedAt          time.Time
 	SourceURI           string
+}
+
+// restampMirrorEnvelope binds one secrets/IAM mirror envelope to the gcp
+// producer (eshu-hq/eshu#8856, arbiter verdict: re-stamp wins). The posture
+// builders stamp collector_kind "secrets_iam_posture" for the posture
+// collector's own facts; envelopes this collector emits must carry "gcp" so
+// the cutover grant, the claim host-stamping, and the in-tree path agree on
+// one producer. Only CollectorKind is touched: SourceSystem, payloads, and
+// stable keys stay byte-identical, so reducer outputs do not move.
+func restampMirrorEnvelope(env Envelope) Envelope {
+	env.CollectorKind = catalog.CollectorKind
+	return env
 }
 
 func newPostureEnvelope(
