@@ -238,6 +238,14 @@ func collectFileClaim(inputPath, parentScopeKind, parentScopeID, sourceURI, prev
 	if len(snapshot.Envelopes) > limits.MaxRecordsPerClaim {
 		return terminalResult(claim, observedAt, "fact-budget-exceeded"), "", nil
 	}
+	return collectSnapshotResult(claim, snapshot, limits, previousDigest, observedAt)
+}
+
+// collectSnapshotResult converts one drained snapshot into the bounded SDK
+// result both the file and live paths return: per-payload and per-page
+// budgets fail closed with terminal results, and the unchanged digest
+// short-circuits repeat claims.
+func collectSnapshotResult(claim sdk.Claim, snapshot gcpruntime.CollectedSnapshot, limits ResourceUse, previousDigest string, observedAt time.Time) (sdk.Result, string, error) {
 	result, err := gcpruntime.ToSDKResult(claim, snapshot)
 	if err != nil {
 		return sdk.Result{}, "", err

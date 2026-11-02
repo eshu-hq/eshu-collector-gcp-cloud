@@ -16,7 +16,8 @@ import (
 // keeps a standalone collector repository standalone: no Eshu internal
 // implementation imports and no cross-collector implementation imports. Only
 // the published SDK modules, the OpenTelemetry metric surface the runtime
-// telemetry uses, and the standard library and yaml are allowed. The
+// telemetry uses, the OAuth2 ADC surface the live CAI transport uses
+// (eshu-hq/eshu#8856), and the standard library and yaml are allowed. The
 // self-import prefix is derived from go.mod so renaming the module can never
 // desync this allowlist.
 func TestImportBoundaryRejectsCoreAndCrossCollectorImports(t *testing.T) {
@@ -27,6 +28,7 @@ func TestImportBoundaryRejectsCoreAndCrossCollectorImports(t *testing.T) {
 		"github.com/eshu-hq/eshu-sdk/collector",
 		"github.com/eshu-hq/eshu-sdk/factschema",
 		"go.opentelemetry.io/otel",
+		"golang.org/x/oauth2",
 		"gopkg.in/yaml.v3",
 	}
 	violations := []string{}

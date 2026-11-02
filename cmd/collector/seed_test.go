@@ -5,6 +5,8 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,5 +100,51 @@ func TestRunSeedRequiresDest(t *testing.T) {
 	var stdout, stderr strings.Builder
 	if err := run([]string{"seed"}, nil, &stdout, &stderr); err == nil {
 		t.Fatal("seed without --dest succeeded")
+	}
+}
+
+// TestRunSeedRejectsBadInvocation proves flag-parse failures and positional
+// arguments fail closed instead of seeding with guessed options.
+func TestRunSeedRejectsBadInvocation(t *testing.T) {
+	t.Parallel()
+
+	var stdout strings.Builder
+	if err := runSeed([]string{"--no-such-flag"}, &stdout, nil); err == nil {
+		t.Fatal("seed with an unknown flag succeeded")
+	}
+	if err := runSeed([]string{"--dest", t.TempDir(), "extra"}, &stdout, nil); err == nil {
+		t.Fatal("seed with a positional argument succeeded")
+	}
+}
+
+// TestSelectImageRefPrefersFlag proves the flag wins, a lone newline counts
+// as unset, and a nil environment lookup yields no reference.
+func TestSelectImageRefPrefersFlag(t *testing.T) {
+	t.Parallel()
+
+	const ref = "ghcr.io/eshu-hq/eshu-collector-gcp-cloud@sha256:871f126d60c9e63679705d62c01ca078206fd0a2a35650d01756c01eed19c2d0"
+	if got := selectImageRef(ref, nil); got != ref {
+		t.Fatalf("selectImageRef(flag) = %q, want the flag", got)
+	}
+	env := func(string) string { return ref + "\n" }
+	if got := selectImageRef("\n", env); got != ref {
+		t.Fatalf("selectImageRef(lone newline) = %q, want the trimmed env ref", got)
+	}
+	if got := selectImageRef("", nil); got != "" {
+		t.Fatalf("selectImageRef(unset, nil env) = %q, want empty", got)
+	}
+}
+
+// TestWriteAtomicFailsClosed proves a writer failure surfaces the error and
+// leaves no partial file behind.
+func TestWriteAtomicFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	target := filepath.Join(t.TempDir(), "manifest.yaml")
+	if err := writeAtomic(target, 0o644, func(io.Writer) error { return errors.New("8856 seed boom") }); err == nil {
+		t.Fatal("writeAtomic(writer error) error = nil, want failure")
+	}
+	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
+		t.Fatal("writeAtomic left a partial file after a writer failure")
 	}
 }
