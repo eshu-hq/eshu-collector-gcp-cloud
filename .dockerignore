@@ -1,0 +1,5 @@
+# Keep the build context to what the Dockerfile consumes (module sources,
+# manifest, fixtures). Everything else only slows the upload and risks
+# leaking worktree metadata into build cache keys.
+.git
+.github

@@ -1,0 +1,91 @@
+apiVersion: eshu.dev/v1alpha1
+kind: ComponentPackage
+metadata:
+  id: collector-gcp-cloud
+  name: GCP Cloud collector
+  publisher: eshu-hq
+  version: 0.1.0
+spec:
+  # compatibleCore is intentionally absent: this repository pins no core
+  # version range (README/CONTRIBUTING declare none), and a copied range
+  # would assert compatibility this satellite has not proven. The cutover
+  # rehearsal (eshu-hq/eshu#8856) sets it once a core floor is demonstrated.
+  componentType: collector
+  collectorKinds:
+    - gcp
+  runtime:
+    # Single-shot SDK output: the satellite speaks collector-sdk/v1alpha1
+    # (the pinned SDK pair has no v1alpha3 page envelope), so every host
+    # request gets exactly one result document back.
+    sdkProtocol: collector-sdk/v1alpha1
+    adapter: process
+  artifacts:
+    - platform: linux/amd64
+      # First-publish placeholder: no image has been pushed yet, so there is
+      # no pushed digest to pin. The tag workflow prints the real digest in
+      # its job summary; record it here with scripts/pin-digest.sh and the
+      # seed installer stamps the deployed reference at install time.
+      image: ghcr.io/eshu-hq/eshu-collector-gcp-cloud@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  emittedFacts:
+    - kind: gcp_cloud_resource
+      payloadSchemaRef: gcp_cloud_resource
+      schemaVersions:
+        - 1.1.0
+      sourceConfidence:
+        - reported
+    - kind: gcp_cloud_relationship
+      payloadSchemaRef: gcp_cloud_relationship
+      schemaVersions:
+        - 1.0.0
+      sourceConfidence:
+        - reported
+    - kind: gcp_tag_observation
+      payloadSchemaRef: gcp_tag_observation
+      schemaVersions:
+        - 1.0.0
+      sourceConfidence:
+        - reported
+    - kind: gcp_iam_policy_observation
+      payloadSchemaRef: gcp_iam_policy_observation
+      schemaVersions:
+        - 1.0.0
+      sourceConfidence:
+        - reported
+    - kind: gcp_dns_record
+      payloadSchemaRef: gcp_dns_record
+      schemaVersions:
+        - 1.0.0
+      sourceConfidence:
+        - reported
+    - kind: gcp_image_reference
+      payloadSchemaRef: gcp_image_reference
+      schemaVersions:
+        - 1.0.0
+      sourceConfidence:
+        - reported
+    - kind: gcp_iam_principal
+      payloadSchemaRef: gcp_iam_principal
+      schemaVersions:
+        - 1.0.0
+      sourceConfidence:
+        - reported
+    - kind: gcp_iam_trust_policy
+      payloadSchemaRef: gcp_iam_trust_policy
+      schemaVersions:
+        - 1.0.0
+      sourceConfidence:
+        - reported
+    - kind: gcp_iam_permission_policy
+      payloadSchemaRef: gcp_iam_permission_policy
+      schemaVersions:
+        - 1.0.0
+      sourceConfidence:
+        - reported
+    - kind: gcp_collection_warning
+      payloadSchemaRef: gcp_collection_warning
+      schemaVersions:
+        - 1.0.0
+      sourceConfidence:
+        - reported
+  telemetry:
+    metricsPrefix: eshu_dp_gcp_cloud_

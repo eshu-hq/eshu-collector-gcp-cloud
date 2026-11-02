@@ -14,9 +14,8 @@ name: ci
 # is the only context the main ruleset requires; the reusable's inner
 # `go-ci / ci-complete` is informational. No static gates: lanes judge the
 # code itself, except the 500-line .go file cap (plain wc -l in the reusable
-# lint lane). This repo ships no Dockerfile or cmd/, so run-image stays
-# false and the boundary hook proves that vacuity (it fails the day either
-# appears, until a real image lane replaces it).
+# lint lane). The Dockerfile and cmd/ ship the collector image, so run-image
+# is on and the vacuity boundary hook is off (run-boundary: false).
 on:
   pull_request:
   push:
@@ -64,14 +63,20 @@ jobs:
               - '**/*.go'
               - 'go.mod'
               - 'go.sum'
+              # manifest.yaml is go:embed'ed by manifest.go, so it ships in
+              # the binary and the image: a manifest-only change must run
+              # the Go lanes, not just the fixture lane.
+              - 'manifest.yaml'
             fixtures:
               # Every entry is test-consumed (grep-proven): extractor
               # *_fixture_test.go files os.ReadFile testdata/*.json,
-              # gcpruntime doc_pin_test.go reads ../gcpcloud/testdata, and
-              # proof_*_test.go read gcpruntime/testdata. No go:embed,
-              # *.yaml, or manifest file exists in this repo.
+              # gcpruntime doc_pin_test.go reads ../gcpcloud/testdata,
+              # proof_*_test.go read gcpruntime/testdata, and the cmd
+              # smoke path plus manifest tests read testdata/complete.json
+              # and manifest.yaml.
               - '**/testdata/**'
               - '**/*.json'
+              - 'manifest.yaml'
             shell:
               - '**/*.sh'
             deps:
@@ -81,8 +86,15 @@ jobs:
             workflow:
               - '.github/workflows/**'
             image:
+              # Every path the Dockerfile consumes: the manifest and the
+              # smoke fixture are COPY'ed, and go.mod/go.sum feed the build.
               - 'Dockerfile'
+              - '.dockerignore'
               - 'cmd/**'
+              - 'manifest.yaml'
+              - 'testdata/**'
+              - 'go.mod'
+              - 'go.sum'
             misc:
               # Fail-closed catch-all: anything not classified above runs
               # the full Go lanes (lint+test+race). Docs stay skipped so a
@@ -102,7 +114,9 @@ jobs:
               - '!**/*.json'
               - '!**/*.sh'
               - '!Dockerfile'
+              - '!.dockerignore'
               - '!cmd/**'
+              - '!manifest.yaml'
               - '!.github/workflows/**'
 
   go-ci:
@@ -114,17 +128,17 @@ jobs:
       working-directory: .
       go-version-file: go.mod
       coverage-floor: 90
-      # No Dockerfile or cmd/ in this repo: the image lane stays off and the
-      # boundary hook below proves that vacuity instead.
-      run-image: false
+      # The Dockerfile ships the collector binary: the image lane builds it
+      # on PRs that change what it embeds (Go sources, manifest, fixture,
+      # module files), replacing the vacuity boundary hook. A go.mod
+      # toolchain bump past the pinned base would otherwise pass every Go
+      # lane yet break docker build, surfacing only as post-merge red main.
+      run-image: ${{ github.event_name != 'pull_request' || needs.changes.outputs.image == 'true' || needs.changes.outputs.go == 'true' }}
       run-lint: ${{ github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflow == 'true' }}
       run-test: ${{ github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.fixtures == 'true' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflow == 'true' }}
       run-race: ${{ github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflow == 'true' }}
       run-shell: ${{ github.event_name != 'pull_request' || needs.changes.outputs.shell == 'true' || needs.changes.outputs.workflow == 'true' }}
-      run-boundary: ${{ github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflow == 'true' }}
-      boundary-command: >-
-        test ! -e Dockerfile && test ! -d cmd ||
-        { echo 'Dockerfile or cmd/ appeared: replace this vacuity proof with a real image lane'; exit 1; }
+      run-boundary: false
       run-govulncheck: ${{ github.event_name != 'pull_request' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.workflow == 'true' }}
       run-gosec: ${{ github.event_name != 'pull_request' || needs.changes.outputs.go == 'true' || needs.changes.outputs.deps == 'true' || needs.changes.outputs.misc == 'true' || needs.changes.outputs.workflow == 'true' }}
       # Scheduled runs opt into failure so the notify job below can file the
