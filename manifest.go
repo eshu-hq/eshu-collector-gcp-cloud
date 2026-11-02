@@ -16,7 +16,7 @@ const (
 	// SourceSystem names the observed source: the GCP APIs this collector scans.
 	SourceSystem = "gcp"
 	// MetricsPrefix is the component-owned metric prefix from the manifest.
-	MetricsPrefix = "eshu_dp_gcp_cloud_collector_"
+	MetricsPrefix = "eshu_dp_gcp_cloud_"
 )
 
 // ManifestYAML is the embedded collector manifest (manifest.yaml) that the

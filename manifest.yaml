@@ -88,4 +88,4 @@ spec:
       sourceConfidence:
         - reported
   telemetry:
-    metricsPrefix: eshu_dp_gcp_cloud_collector_
+    metricsPrefix: eshu_dp_gcp_cloud_
