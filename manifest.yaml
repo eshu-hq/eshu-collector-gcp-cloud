@@ -4,7 +4,7 @@ metadata:
   id: collector-gcp-cloud
   name: GCP Cloud collector
   publisher: eshu-hq
-  version: 0.1.0
+  version: 0.1.1
 spec:
   # compatibleCore is intentionally absent: this repository pins no core
   # version range (README/CONTRIBUTING declare none), and a copied range
@@ -21,11 +21,12 @@ spec:
     adapter: process
   artifacts:
     - platform: linux/amd64
-      # First-publish placeholder: no image has been pushed yet, so there is
-      # no pushed digest to pin. The tag workflow prints the real digest in
-      # its job summary; record it here with scripts/pin-digest.sh and the
-      # seed installer stamps the deployed reference at install time.
-      image: ghcr.io/eshu-hq/eshu-collector-gcp-cloud@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      # Interim pin for the 0.1.1 release: the :sha-ee6a09d main image was
+      # built from this exact release content (live CAI transport); only the
+      # version bytes above differ. Tagging publishes the final digest and
+      # the follow-up pin records it exactly; the seed installer stamps the
+      # deployed reference at install time.
+      image: ghcr.io/eshu-hq/eshu-collector-gcp-cloud@sha256:0ee18222c5dc5cc37125d0533b87b26998f4f853c7170db60b3d6f9c8549ebd0
   emittedFacts:
     - kind: gcp_cloud_resource
       payloadSchemaRef: gcp_cloud_resource

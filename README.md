@@ -17,16 +17,18 @@ SBOM and provenance attestations, and a person copies the digest into the
 activation afterwards.
 
 1. Land the release on `main`, then tag the protected `main` head:
-   `git tag v0.1.0` (the tag must be exactly `v` plus
+   `git tag v0.1.1` (the tag must be exactly `v` plus
    `manifest.yaml` `metadata.version`; anything else fails before anything
    builds or pushes).
 2. Push the tag. `release.yml` publishes the image and prints the
    digest-pinned reference (`ghcr.io/...@sha256:...`) in the job summary.
 3. Pin the published digest in `manifest.yaml` `artifacts`:
-   `scripts/pin-digest.sh ghcr.io/eshu-hq/eshu-collector-gcp-cloud:v0.1.0`.
-   The checked-in manifest carries the all-zero placeholder until this
-   first publish lands it (`manifest_test.go` enforces the placeholder
-   only at the initial `0.1.0` version).
+   `scripts/pin-digest.sh ghcr.io/eshu-hq/eshu-collector-gcp-cloud:v0.1.1`.
+   The checked-in manifest carried the all-zero placeholder until the
+   first publish landed it; every version past the initial `0.1.0` must
+   pin a real digest (`manifest_test.go` enforces this), so a bump lands
+   with the newest main `:sha-` digest as the interim pin and the
+   post-publish follow-up records the exact tag digest.
 4. Seed the component home from the published image digest:
    `collector seed --dest DIR --image-ref ghcr.io/...@sha256:...`
    (or set `COLLECTOR_IMAGE_REF`); the installer stamps the deployed
