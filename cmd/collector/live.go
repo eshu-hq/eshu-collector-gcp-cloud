@@ -208,6 +208,14 @@ func collectLivePlanWithLookup(plan stdioPlan, lookup func(string) (string, bool
 		TagProvider:  client,
 		RedactionKey: key,
 	}
+	// The host validates the returned generation against the claim it
+	// issued: an unbound drain echoes a derived digest and fails every run
+	// terminally with invalid_result (#8856). A claim the binding rejects
+	// is a host contract violation, so it fails hard instead of reporting
+	// a terminal result under a generation the host cannot accept.
+	if err := source.BindClaim(plan.claim); err != nil {
+		return sdk.Result{}, "", err
+	}
 	merged, terminalReason, err := drainLiveSnapshots(context.Background(), source, plan.live.Limits)
 	if err != nil {
 		return sdk.Result{}, "", err
