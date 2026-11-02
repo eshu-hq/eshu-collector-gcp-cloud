@@ -208,14 +208,28 @@ func collectLivePlanWithLookup(plan stdioPlan, lookup func(string) (string, bool
 		TagProvider:  client,
 		RedactionKey: key,
 	}
+	merged, terminalReason, err := drainLiveSnapshots(context.Background(), source, plan.live.Limits)
+	if err != nil {
+		return sdk.Result{}, "", err
+	}
+	if terminalReason != "" {
+		return terminalResult(plan.claim, observedAt, terminalReason), "", nil
+	}
+	return collectSnapshotResult(plan.claim, merged, plan.live.Limits, plan.live.PreviousDigest, observedAt)
+}
+
+// drainLiveSnapshots drains every scope snapshot from a live source and
+// merges the envelopes into one claim snapshot. A drain that yields nothing
+// or exceeds the record budget reports a terminal reason instead of an
+// empty or oversized complete result.
+func drainLiveSnapshots(ctx context.Context, source *gcpruntime.Source, limits ResourceUse) (gcpruntime.CollectedSnapshot, string, error) {
 	var envelopes []gcpcloud.Envelope
 	var first gcpruntime.CollectedSnapshot
 	partial := false
-	ctx := context.Background()
 	for {
 		snapshot, ok, err := source.Next(ctx)
 		if err != nil {
-			return sdk.Result{}, "", err
+			return gcpruntime.CollectedSnapshot{}, "", err
 		}
 		if !ok {
 			break
@@ -227,15 +241,15 @@ func collectLivePlanWithLookup(plan stdioPlan, lookup func(string) (string, bool
 		envelopes = append(envelopes, snapshot.Envelopes...)
 	}
 	if len(envelopes) == 0 {
-		return terminalResult(plan.claim, observedAt, "live-scope-empty"), "", nil
+		return gcpruntime.CollectedSnapshot{}, "live-scope-empty", nil
 	}
-	if len(envelopes) > plan.live.Limits.MaxRecordsPerClaim {
-		return terminalResult(plan.claim, observedAt, "fact-budget-exceeded"), "", nil
+	if len(envelopes) > limits.MaxRecordsPerClaim {
+		return gcpruntime.CollectedSnapshot{}, "fact-budget-exceeded", nil
 	}
 	merged := first
 	merged.Envelopes = envelopes
 	merged.Partial = partial
-	return collectSnapshotResult(plan.claim, merged, plan.live.Limits, plan.live.PreviousDigest, observedAt)
+	return merged, "", nil
 }
 
 // resolveLiveRedactionKey obtains deployment key material only at the command

@@ -404,11 +404,14 @@ func (c LiveClient) backoff(attempt int) time.Duration {
 	if c.RetryBackoff != nil {
 		return c.RetryBackoff(attempt)
 	}
-	delay := time.Duration(100*(1<<(attempt-1))) * time.Millisecond
-	if delay > time.Second {
+	shift := attempt - 1
+	if shift < 0 {
+		shift = 0
+	}
+	if shift > 3 {
 		return time.Second
 	}
-	return delay
+	return time.Duration(100*(1<<shift)) * time.Millisecond
 }
 
 func (c LiveClient) sleep(ctx context.Context, delay time.Duration) error {
