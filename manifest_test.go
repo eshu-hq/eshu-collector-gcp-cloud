@@ -34,6 +34,7 @@ type manifestFile struct {
 		Version string `yaml:"version"`
 	} `yaml:"metadata"`
 	Spec struct {
+		CompatibleCore string   `yaml:"compatibleCore"`
 		CollectorKinds []string `yaml:"collectorKinds"`
 		Runtime        struct {
 			SDKProtocol string `yaml:"sdkProtocol"`
@@ -178,5 +179,19 @@ func TestManifestArtifactPlaceholderPinnedOnFirstPublish(t *testing.T) {
 		if manifest.Metadata.Version != "0.1.0" {
 			t.Fatalf("artifact image %q is the unpinned placeholder digest past the initial version: run scripts/pin-digest.sh", artifact.Image)
 		}
+	}
+}
+
+// TestManifestDeclaresCompatibleCore guards the cutover-blocking regression:
+// the chart's install gate requires spec.compatibleCore, so the manifest
+// must always declare the demonstrated core floor. The range mirrors the
+// sibling aws-cloud satellite; the ops-qa cutover (eshu-hq/eshu#8856) is the
+// demonstration.
+func TestManifestDeclaresCompatibleCore(t *testing.T) {
+	t.Parallel()
+
+	manifest := loadManifest(t)
+	if manifest.Spec.CompatibleCore == "" {
+		t.Fatal("spec.compatibleCore is empty: the chart refuses to install without it")
 	}
 }
