@@ -21,12 +21,11 @@ spec:
     adapter: process
   artifacts:
     - platform: linux/amd64
-      # Interim pin for the 0.1.1 release: the :sha-ee6a09d main image was
-      # built from this exact release content (live CAI transport); only the
-      # version bytes above differ. Tagging publishes the final digest and
-      # the follow-up pin records it exactly; the seed installer stamps the
-      # deployed reference at install time.
-      image: ghcr.io/eshu-hq/eshu-collector-gcp-cloud@sha256:0ee18222c5dc5cc37125d0533b87b26998f4f853c7170db60b3d6f9c8549ebd0
+      # Exact pin for the 0.1.1 release: this is the exact tag-candidate
+      # digest published for :sha-1b6afc12ad4114cae8c3d1e8e1ad2670e16cb948
+      # by the main-push release run; the seed installer stamps the deployed
+      # reference at install time.
+      image: ghcr.io/eshu-hq/eshu-collector-gcp-cloud@sha256:af99470f1c7b6bba7b8a3e4e965dc13c24e28884187d55d3d1cc9ebc54763da5
   emittedFacts:
     - kind: gcp_cloud_resource
       payloadSchemaRef: gcp_cloud_resource
