@@ -17,9 +17,9 @@ legitimately skipped.
 | `.github/workflows/**` | `actionlint` plus the Go lanes |
 | Docs only (`*.md`, `LICENSE`, `CODEOWNERS`) | no lanes |
 
-The `boundary` lane proves the vacuous image case (no `Dockerfile` or `cmd/`
-exists; it fails the day either appears, until a real image lane replaces
-it). `actionlint` runs only on workflow changes.
+The `image` lane builds the `Dockerfile` collector image on PRs that change
+what it embeds; it replaced the vacuous-image `boundary` proof, which is
+now off. `actionlint` runs only on workflow changes.
 
 Pushes to `main` run every lane. A weekly schedule runs the `govulncheck` and
 `gosec` sweeps; findings open or update an issue.
