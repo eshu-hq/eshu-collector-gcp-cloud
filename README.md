@@ -1,48 +1,73 @@
 # eshu-collector-gcp-cloud
 
-Eshu GCP cloud collector, extracted from the Eshu core repository.
+**Status: pre-release.** Eshu core still owns this data in
+production. This repo has no authority to publish facts on its own
+yet.
 
-**Pre-release. Holds no producer authority until its reviewed cutover
-(eshu-hq/eshu#8856).**
+In a nutshell: this collector reads Google Cloud asset data and
+hands Eshu evidence about what exists in a scope, how those
+resources relate, and who can access them. Eshu can then answer
+which Google Cloud resources it has seen and how they connect.
+The collector only collects and returns evidence; it doesn't
+store anything itself.
 
-Extraction tracking: [eshu-hq/eshu#8856](https://github.com/eshu-hq/eshu/issues/8856).
-The in-tree extraction census, producer-grant draft, and parity proofs live
-in the core repository until the cutover rehearsal lands them here.
+```mermaid
+flowchart LR
+    G[Google Cloud CAI, or a fixture file] --> C[This collector]
+    C --> H[Eshu host process]
+    H --> E[Eshu core]
+```
 
-## Releasing
+In text: Google Cloud (or a fixture file) -> this collector ->
+Eshu host process -> Eshu core.
 
-The release vehicle is digest-by-digest and maintainer-run. Nothing here
-deploys: pushing a version tag builds, signs, and publishes the image plus
-SBOM and provenance attestations, and a person copies the digest into the
-activation afterwards.
+## When to use it
 
-1. Land the release on `main`, then tag the protected `main` head:
-   `git tag v0.1.2` (the tag must be exactly `v` plus
-   `manifest.yaml` `metadata.version`; anything else fails before anything
-   builds or pushes).
-2. Push the tag. `release.yml` publishes the image and prints the
-   digest-pinned reference (`ghcr.io/...@sha256:...`) in the job summary.
-3. Pin the published digest in `manifest.yaml` `artifacts`:
-   `scripts/pin-digest.sh ghcr.io/eshu-hq/eshu-collector-gcp-cloud:v0.1.2`.
-   The checked-in manifest carried the all-zero placeholder until the
-   first publish landed it; every version past the initial `0.1.0` must
-   pin a real digest (`manifest_test.go` enforces this), so a bump lands
-   with the newest main `:sha-` digest as the interim pin and the
-   post-publish follow-up records the exact tag digest.
-4. Seed the component home from the published image digest:
-   `collector seed --dest DIR --image-ref ghcr.io/...@sha256:...`
-   (or set `COLLECTOR_IMAGE_REF`); the installer stamps the deployed
-   reference into the seeded `manifest.yaml` because an image cannot
-   embed its own digest.
+Use it when Eshu needs evidence about Google Cloud resources under
+one organization, folder, or project, including their
+relationships, tags, DNS records, image references, and IAM
+policies and identities.
 
-Operational notes: under the `process` adapter the host starts
-`./collector --sdk-stdio`, writes one `collector-sdk/v1alpha1` claim on
-stdin, and reads one SDK result from stdout. `--previous-digest` (or the
-host `freshness.previousDigest`) short-circuits an unchanged scan to a
-fact-free `unchanged` result. The live claim path parses the host
-activation scopes and reads them through the ported CAI transport
-(Application Default Credentials, GET-only `assets.list`); anything that
-cannot scan fails closed with a terminal result, so no claim ever reports
-complete for a scope it did not read. Producer grants and producer
-authority stay in core until the cutover above; this section covers the
-image vehicle only.
+## When not to use it
+
+- Don't use it as a live Google Cloud browser or reporting tool.
+  It returns facts to the Eshu host; it has no user interface.
+- Don't mix credentials in one activation.
+  Scopes that name different `credential_ref` values fail closed.
+- Don't use it for other clouds or for Google Cloud data-plane
+  contents (object data, secrets, or record payloads).
+
+## How Eshu runs it
+
+The host runs one claim per process invocation.
+It starts `./collector --sdk-stdio`, writes one
+`collector-sdk/v1alpha1` request to stdin, and reads one result
+from stdout. The host owns admission and storage; this binary
+never commits facts itself.
+
+## Documentation
+
+Start at the [docs index](docs/README.md). Shortcuts people use most:
+
+| Page | What you'll find there |
+|---|---|
+| [Getting started](docs/getting-started/README.md) | Run it once, see facts come back |
+| [Configuration](docs/reference/configuration.md) | Every config field, credentials, and the claim budget |
+| [Facts](docs/reference/facts.md) | The fact kinds it emits, mirroring the manifest |
+| [Diagrams](docs/diagrams/README.md) | Every diagram, with captions and text versions |
+
+## Related repos
+
+- [eshu](https://github.com/eshu-hq/eshu), Eshu core
+- [eshu-sdk](https://github.com/eshu-hq/eshu-sdk), collector and fact-schema contracts
+- [eshu-deploy](https://github.com/eshu-hq/eshu-deploy), deployment charts and activations
+
+## Development
+
+Run `make ci` to check a change the way CI does.
+
+## Contributing, security, and license
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a change.
+There's no `SECURITY.md` in this repo.
+Licensed under MIT; see [LICENSE](LICENSE).
